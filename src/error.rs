@@ -1,12 +1,10 @@
 use thiserror::Error;
 
 #[non_exhaustive]
-#[derive(Debug, Error, Clone, Copy)]
+#[derive(Debug, Error, Clone)]
 pub enum VncError {
-    #[error("Error Test")]
-    ErrorInit,
-}
-
-pub fn test() -> Result<(), VncError> {
-    Err(VncError::ErrorInit)
+    #[error("Cannot start the vnc handle shake with the server")]
+    Handleshake,
+    #[error("Vnc Error with message: {0}")]
+    Custom(String),
 }
