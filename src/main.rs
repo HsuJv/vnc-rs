@@ -1,15 +1,36 @@
 use anyhow::Result;
 use tokio::{self, net::TcpStream};
-use vnc_rs::client::VncConnector;
+use tracing::Level;
+use vnc::client::connector::VncConnector;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let tcp = TcpStream::connect("127.0.0.1:5900").await?;
-    let _vnc = VncConnector::new(tcp)
-        .set_auth_method(|| "123".to_string())
-        .build()
-        .try_start()
-        .await?;
+    // Create tracing subscriber
+    #[cfg(debug_assertions)]
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(Level::TRACE)
+        .finish();
+    #[cfg(not(debug_assertions))]
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
 
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    let tcp = TcpStream::connect("127.0.0.1:5900").await?;
+    let vnc = VncConnector::new(tcp)
+        .set_auth_method(|| "123".to_string())
+        .add_encoding(vnc::VncEncoding::Raw)
+        .build()?
+        .try_start()
+        .await?
+        .finish()?;
+    let (vnc_out_send, mut vnc_out_recv) = tokio::sync::mpsc::channel(100);
+    let (_vnc_in_send, vnc_in_recv) = tokio::sync::mpsc::channel(100);
+    tokio::spawn(async move { vnc.run(vnc_out_send, vnc_in_recv).await.unwrap() });
+
+    while let Some(_event) = vnc_out_recv.recv().await {
+        // info!("Got event {:?}", event);
+    }
     Ok(())
 }
