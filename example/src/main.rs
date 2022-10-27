@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tokio::{self, net::TcpStream};
 use tracing::Level;
-use vnc::{client::connector::VncConnector, PixelFormat};
+use vnc::{client::connector::VncConnector, PixelFormat, X11Event};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,11 +28,11 @@ async fn main() -> Result<()> {
         .await?
         .finish()?;
     let (vnc_out_send, mut vnc_out_recv) = tokio::sync::mpsc::channel(100);
-    let (_vnc_in_send, vnc_in_recv) = tokio::sync::mpsc::channel(100);
+    let (vnc_in_send, vnc_in_recv) = tokio::sync::mpsc::channel(100);
     tokio::spawn(async move { vnc.run(vnc_out_send, vnc_in_recv).await.unwrap() });
 
     while let Some(_event) = vnc_out_recv.recv().await {
-        info!("Got event {:?}", event);
+        vnc_in_send.send(X11Event::Refresh).await?;
     }
     Ok(())
 }

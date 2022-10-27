@@ -122,19 +122,6 @@ where
                                     _ => unimplemented!()
                                 }
                             }
-
-                            // require frameupdate every time
-                            ClientMsg::FramebufferUpdateRequest(
-                                crate::Rect {
-                                    x: 0,
-                                    y: 0,
-                                    width: self.screen.0,
-                                    height: self.screen.1,
-                                },
-                                0,
-                            )
-                            .write(&mut self.stream)
-                            .await?;
                         }
                         _ => unimplemented!(),
                     }
