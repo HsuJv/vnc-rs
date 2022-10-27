@@ -123,7 +123,7 @@ impl ClientMsg {
 #[derive(Debug)]
 pub(super) enum ServerMsg {
     FramebufferUpdate(u16),
-    SetColorMapEntries,
+    // SetColorMapEntries,
     Bell,
     ServerCutText(String),
 }
