@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tokio::{self, net::TcpStream};
 use tracing::Level;
-use vnc::client::connector::VncConnector;
+use vnc::{client::connector::VncConnector, PixelFormat};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,6 +21,8 @@ async fn main() -> Result<()> {
     let vnc = VncConnector::new(tcp)
         .set_auth_method(|| "123".to_string())
         .add_encoding(vnc::VncEncoding::Raw)
+        .allow_shared(true)
+        .set_pixel_format(PixelFormat::rgba())
         .build()?
         .try_start()
         .await?
@@ -30,7 +32,7 @@ async fn main() -> Result<()> {
     tokio::spawn(async move { vnc.run(vnc_out_send, vnc_in_recv).await.unwrap() });
 
     while let Some(_event) = vnc_out_recv.recv().await {
-        // info!("Got event {:?}", event);
+        info!("Got event {:?}", event);
     }
     Ok(())
 }

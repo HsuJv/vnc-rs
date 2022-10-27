@@ -36,7 +36,9 @@ impl Decoder {
             pixels.set_len(buffer_size)
         };
         input.read_exact(&mut pixels).await?;
-        output.send(VncEvent::BitImage(pixels)).await?;
+        output
+            .send(VncEvent::BitImage(rect.clone(), pixels))
+            .await?;
         Ok(())
     }
 }

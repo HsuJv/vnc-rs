@@ -25,7 +25,7 @@ impl ClientMsg {
                 // | 3            |              | padding      |
                 // | 16           | PIXEL_FORMAT | pixel-format |
                 // +--------------+--------------+--------------+
-                let mut payload = vec![1_u8, 0, 0, 0];
+                let mut payload = vec![0_u8, 0, 0, 0];
                 payload.extend(<PixelFormat as Into<Vec<u8>>>::into(pf));
                 writer.write_all(&payload).await?;
                 Ok(())

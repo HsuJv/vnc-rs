@@ -1,6 +1,6 @@
 [package]
 name = "vnc-rs"
-version = "0.1.1"
+version = "0.1.0"
 edition = "2021"
 authors  = ["Jovi Hsu <jv.hsu@outlook.com>"]
 license = "MIT OR Apache-2.0"
@@ -13,17 +13,18 @@ keywords = ["vnc"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
-name = "vnc"
-path = "src/lib.rs"
+[[bin]]
+name = "vnc-rs"
 
 [dependencies]
+vnc-rs = { path="../" }
 #error
 thiserror = "^1.0"
 anyhow = "^1.0"
 
 #log
 tracing = { version = "^0.1", features = ["log"] }
+tracing-subscriber = { version = "^0.3" }
 
 # async
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
