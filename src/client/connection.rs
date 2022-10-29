@@ -123,7 +123,13 @@ where
                                 }
                             }
                         }
-                        _ => unimplemented!(),
+                        // SetColorMapEntries,
+                        ServerMsg::Bell => {
+                            sender.send(VncEvent::Bell).await?;
+                        }
+                        ServerMsg::ServerCutText(text) => {
+                            sender.send(VncEvent::Text(text)).await?;
+                        }
                     }
                 }
                 x11_event = recv.recv() => {
@@ -142,11 +148,11 @@ where
                                 .write(&mut self.stream)
                                 .await?;
                             },
-                            X11Event::KeyEvent(keycode, down) => {
-                                ClientMsg::KeyEvent(keycode, down).write(&mut self.stream).await?;
+                            X11Event::KeyEvent(key) => {
+                                ClientMsg::KeyEvent(key.keycode, key.down).write(&mut self.stream).await?;
                             },
-                            X11Event::PointerEvent(x, y, mask) => {
-                                ClientMsg::PointerEvent(x, y, mask).write(&mut self.stream).await?;
+                            X11Event::PointerEvent(mouse) => {
+                                ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons).write(&mut self.stream).await?;
                             },
                             X11Event::CopyText(text) => {
                                 ClientMsg::ClientCutText(text).write(&mut self.stream).await?;
@@ -180,7 +186,7 @@ where
         let mut send_our_pf = false;
 
         sender
-            .send(VncEvent::SetResulotin(screen_width, screen_height))
+            .send(VncEvent::SetResulotin((screen_width, screen_height).into()))
             .await?;
         self.screen = (screen_width, screen_height);
 
