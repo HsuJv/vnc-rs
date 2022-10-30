@@ -104,6 +104,7 @@ where
         trace!("Start main loop");
         let mut raw_decoder = codec::RawDecoder::new();
         let mut zrle_decoder = codec::ZrleDecoder::new();
+        let mut tight_decoder = codec::TightDecoder::new();
         let pf = self.pixel_format.as_ref().unwrap();
         loop {
             tokio::select! {
@@ -128,7 +129,7 @@ where
                                         sender.send(VncEvent::Copy(rect.rect, src_rect)).await?;
                                     }
                                     VncEncoding::Tight => {
-                                        unimplemented!()
+                                        tight_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
                                     VncEncoding::Zrle => {
                                         zrle_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;

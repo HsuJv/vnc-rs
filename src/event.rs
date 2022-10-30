@@ -36,6 +36,7 @@ pub enum VncEvent {
     RawImage(Rect, ImageData),
     Copy(DstRect, SrcRect),
     JpegImage(Rect, ImageData),
+    // PngImage(Rect, ImageData),
     Bell,
     Text(String),
 }

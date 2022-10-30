@@ -13,8 +13,8 @@ pub enum VncEncoding {
     Tight = 7,
     // Trle = 15,
     Zrle = 16,
-    CursorPseudo = -239,
-    DesktopSizePseudo = -223,
+    // CursorPseudo = -239,
+    // DesktopSizePseudo = -223,
 }
 
 impl From<u32> for VncEncoding {
