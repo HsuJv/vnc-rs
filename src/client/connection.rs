@@ -138,6 +138,9 @@ where
                                     VncEncoding::CursorPseudo => {
                                         cursor.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
+                                    VncEncoding::DesktopSizePseudo => {
+                                        sender.send(VncEvent::SetResulotin((rect.rect.width, rect.rect.height).into())).await?;
+                                    }
                                 }
                             }
                         }
