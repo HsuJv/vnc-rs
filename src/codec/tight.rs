@@ -245,7 +245,7 @@ impl Decoder {
             j += 3;
         }
 
-        output.send(VncEvent::RawImage(*rect, data)).await?;
+        output.send(VncEvent::RawImage(*rect, image)).await?;
 
         Ok(())
     }
