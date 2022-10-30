@@ -90,7 +90,7 @@ where
         self.send_client_encoding().await?;
         trace!("Require the first frame");
         ClientMsg::FramebufferUpdateRequest(
-            crate::Rect {
+            Rect {
                 x: 0,
                 y: 0,
                 width: self.screen.0,
@@ -116,8 +116,21 @@ where
 
                                 match rect.encoding {
                                     VncEncoding::Raw => {
-                                        trace!("Raw rect {:?}", rect.rect);
                                         raw_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
+                                    }
+                                    VncEncoding::CopyRect => {
+                                        let source_x = self.stream.read_u16().await?;
+                                        let source_y = self.stream.read_u16().await?;
+                                        let mut src_rect = rect.rect;
+                                        src_rect.x = source_x;
+                                        src_rect.y = source_y;
+                                        sender.send(VncEvent::Copy(rect.rect, src_rect)).await?;
+                                    }
+                                    VncEncoding::Tight => {
+                                        unimplemented!()
+                                    }
+                                    VncEncoding::Zrle => {
+                                        unimplemented!()
                                     }
                                     _ => unimplemented!()
                                 }
@@ -137,7 +150,7 @@ where
                         match x11_event {
                             X11Event::Refresh => {
                                 ClientMsg::FramebufferUpdateRequest(
-                                    crate::Rect {
+                                    Rect {
                                         x: 0,
                                         y: 0,
                                         width: self.screen.0,

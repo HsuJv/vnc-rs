@@ -1,4 +1,4 @@
-use crate::{error::VncError, PixelFormat, Rect, VncEncoding};
+use crate::{PixelFormat, Rect, VncEncoding, VncError};
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

@@ -1,4 +1,4 @@
-use crate::config::PixelFormat;
+use crate::PixelFormat;
 
 type ImageData = Vec<u8>;
 
@@ -25,13 +25,16 @@ impl From<(u16, u16)> for Screen {
     }
 }
 
+type SrcRect = Rect;
+type DstRect = Rect;
+
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum VncEvent {
     SetResulotin(Screen),
     SetPixelFormat(PixelFormat),
     RawImage(Rect, ImageData),
-    Copy(Rect, Rect),
+    Copy(DstRect, SrcRect),
     JpegImage(Rect, ImageData),
     Bell,
     Text(String),

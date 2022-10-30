@@ -1,6 +1,5 @@
 use super::security;
-use crate::error::VncError;
-use crate::VncVersion;
+use crate::{VncError, VncVersion};
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -57,7 +56,7 @@ impl SecurityType {
                     reader.read_to_string(&mut err_msg).await?;
                     return Err(VncError::Custom(err_msg).into());
                 }
-                unreachable!()
+                unimplemented!()
             }
         }
     }
@@ -82,7 +81,7 @@ impl From<AuthResult> for u32 {
     }
 }
 
-pub struct AuthHelper {
+pub(super) struct AuthHelper {
     challenge: [u8; 16],
     key: [u8; 8],
 }

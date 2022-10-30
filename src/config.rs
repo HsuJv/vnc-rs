@@ -1,4 +1,4 @@
-use crate::error::VncError;
+use crate::VncError;
 use anyhow::{Context, Ok, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
