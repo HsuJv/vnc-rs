@@ -31,7 +31,7 @@ type DstRect = Rect;
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum VncEvent {
-    SetResulotin(Screen),
+    SetResolution(Screen),
     SetPixelFormat(PixelFormat),
     RawImage(Rect, ImageData),
     Copy(DstRect, SrcRect),

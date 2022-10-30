@@ -139,7 +139,7 @@ where
                                         cursor.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
                                     VncEncoding::DesktopSizePseudo => {
-                                        sender.send(VncEvent::SetResulotin((rect.rect.width, rect.rect.height).into())).await?;
+                                        sender.send(VncEvent::SetResolution((rect.rect.width, rect.rect.height).into())).await?;
                                     }
                                 }
                             }
@@ -207,7 +207,9 @@ where
         let mut send_our_pf = false;
 
         sender
-            .send(VncEvent::SetResulotin((screen_width, screen_height).into()))
+            .send(VncEvent::SetResolution(
+                (screen_width, screen_height).into(),
+            ))
             .await?;
         self.screen = (screen_width, screen_height);
 
