@@ -28,8 +28,6 @@ use std::io::{Read, Result};
 pub struct ZlibReader<'a> {
     decompressor: flate2::Decompress,
     input: &'a [u8],
-    buffer: u8,
-    position: usize,
 }
 
 impl<'a> ZlibReader<'a> {
@@ -37,8 +35,6 @@ impl<'a> ZlibReader<'a> {
         ZlibReader {
             decompressor,
             input,
-            buffer: 0,
-            position: 0,
         }
     }
 
@@ -57,32 +53,6 @@ impl<'a> ZlibReader<'a> {
         let mut buf = [0; 1];
         self.read_exact(&mut buf)?;
         Ok(buf[0])
-    }
-
-    pub fn read_bits(&mut self, count: usize) -> std::io::Result<u8> {
-        assert!(count > 0 && count <= 8);
-
-        if self.position == 8 {
-            self.buffer = self.read_u8()?;
-            self.position = 0;
-        }
-
-        if self.position + count <= 8 {
-            let shift = 8 - (count + self.position);
-            let mask = (1 << count) - 1;
-            let result = (self.buffer >> shift) & mask;
-            self.position += count;
-            Ok(result)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "unaligned ZRLE bit read",
-            ))
-        }
-    }
-
-    pub fn align(&mut self) {
-        self.position = 8;
     }
 }
 

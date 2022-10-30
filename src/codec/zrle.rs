@@ -4,7 +4,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
     sync::mpsc::Sender,
 };
-use tracing::error;
+use tracing::{error};
 
 use super::{uninit_vec, zlib::ZlibReader};
 
@@ -155,12 +155,24 @@ impl Decoder {
                             5..=16 => 4,
                             _ => unreachable!(),
                         };
-                        for _ in 0..height {
+                        let mut encoded = reader.read_u8()?;
+                        let mask = (1 << bits_per_index) - 1;
+
+                        for y in 0..height {
+                            let mut shift = 8 - bits_per_index;
                             for _ in 0..width {
-                                let index = reader.read_bits(bits_per_index)?;
-                                copy_indexed(&palette, &mut pixels, bpp, index)
+                                if shift < 0 {
+                                    shift = 8 - bits_per_index;
+                                    encoded = reader.read_u8()?;
+                                }
+                                let idx = (encoded >> shift) & mask;
+
+                                copy_indexed(&palette, &mut pixels, bpp, idx);
+                                shift -= bits_per_index;
                             }
-                            reader.align();
+                            if shift < 8 - bits_per_index && y < height - 1 {
+                                encoded = reader.read_u8()?;
+                            }
                         }
                     }
                     (true, 0) => {
@@ -201,8 +213,8 @@ impl Decoder {
                             count += run_length;
                         }
                     }
-                    _ => {
-                        error!("ZRLE subencoding error");
+                    (x, y) => {
+                        error!("ZRLE subencoding error {:?}", (x, y));
                         return Err(VncError::InvalidImageData.into());
                     }
                 }
