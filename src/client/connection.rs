@@ -105,6 +105,7 @@ where
         let mut raw_decoder = codec::RawDecoder::new();
         let mut zrle_decoder = codec::ZrleDecoder::new();
         let mut tight_decoder = codec::TightDecoder::new();
+        let mut cursor = codec::CursorDecoder::new();
         let pf = self.pixel_format.as_ref().unwrap();
         loop {
             tokio::select! {
@@ -134,7 +135,9 @@ where
                                     VncEncoding::Zrle => {
                                         zrle_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
-                                    _ => unimplemented!()
+                                    VncEncoding::CursorPseudo => {
+                                        cursor.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
+                                    }
                                 }
                             }
                         }

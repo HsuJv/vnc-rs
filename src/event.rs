@@ -37,6 +37,7 @@ pub enum VncEvent {
     Copy(DstRect, SrcRect),
     JpegImage(Rect, ImageData),
     // PngImage(Rect, ImageData),
+    SetCursor(Rect, ImageData),
     Bell,
     Text(String),
 }

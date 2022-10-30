@@ -13,7 +13,7 @@ pub enum VncEncoding {
     Tight = 7,
     // Trle = 15,
     Zrle = 16,
-    // CursorPseudo = -239,
+    CursorPseudo = -239,
     // DesktopSizePseudo = -223,
 }
 
