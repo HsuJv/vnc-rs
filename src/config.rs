@@ -105,7 +105,7 @@ pub struct PixelFormat {
     // Although the depth should
     // be consistent with the bits-per-pixel and the various -max values,
     // clients do not use it when interpreting pixel data.
-    _depth: u8,
+    pub depth: u8,
     // true if multi-byte pixels are interpreted as big endian
     pub big_endian_flag: u8,
     // true then the last six items specify how to extract the red, green and blue intensities from the pixel value
@@ -128,7 +128,7 @@ impl From<PixelFormat> for Vec<u8> {
     fn from(pf: PixelFormat) -> Vec<u8> {
         vec![
             pf.bits_per_pixel,
-            pf._depth,
+            pf.depth,
             pf.big_endian_flag,
             pf.true_color_flag,
             (pf.red_max >> 8) as u8,
@@ -154,7 +154,7 @@ impl TryFrom<[u8; 16]> for PixelFormat {
         if bits_per_pixel != 8 && bits_per_pixel != 16 && bits_per_pixel != 32 {
             return Err(VncError::WrongPixelFormat.into());
         }
-        let _depth = pf[1];
+        let depth = pf[1];
         let big_endian_flag = pf[2];
         let true_color_flag = pf[3];
         let red_max = u16::from_be_bytes(pf[4..6].try_into().unwrap());
@@ -168,7 +168,7 @@ impl TryFrom<[u8; 16]> for PixelFormat {
         let _padding_3 = pf[15];
         Ok(PixelFormat {
             bits_per_pixel,
-            _depth,
+            depth,
             big_endian_flag,
             true_color_flag,
             red_max,
@@ -186,11 +186,11 @@ impl TryFrom<[u8; 16]> for PixelFormat {
 
 impl Default for PixelFormat {
     // by default the pixel transformed is (a << 24 | r << 16 || g << 8 | b) in le
-    // which is [b, g, r, a] in ne
+    // which is [b, g, r, a] in network
     fn default() -> Self {
         Self {
             bits_per_pixel: 32,
-            _depth: 24,
+            depth: 24,
             big_endian_flag: 0,
             true_color_flag: 1,
             red_max: 255,
@@ -208,13 +208,13 @@ impl Default for PixelFormat {
 
 impl PixelFormat {
     // (a << 24 | r << 16 || g << 8 | b) in le
-    // [b, g, r, a] in ne
+    // [b, g, r, a] in network
     pub fn bgra() -> PixelFormat {
         PixelFormat::default()
     }
 
     // (a << 24 | b << 16 | g << 8 | r) in le
-    // which is [r, g, b, a] in ne
+    // which is [r, g, b, a] in network
     pub fn rgba() -> PixelFormat {
         Self {
             red_shift: 0,

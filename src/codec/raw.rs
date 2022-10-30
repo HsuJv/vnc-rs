@@ -5,6 +5,8 @@ use tokio::{
     sync::mpsc::Sender,
 };
 
+use super::uninit_vec;
+
 pub struct Decoder {}
 
 impl Decoder {
@@ -29,12 +31,7 @@ impl Decoder {
         // +----------------------------+--------------+-------------+
         let bpp = format.bits_per_pixel / 8;
         let buffer_size = bpp as usize * rect.height as usize * rect.width as usize;
-
-        let mut pixels = Vec::with_capacity(buffer_size);
-        #[allow(clippy::uninit_vec)]
-        unsafe {
-            pixels.set_len(buffer_size)
-        };
+        let mut pixels = uninit_vec(buffer_size);
         input.read_exact(&mut pixels).await?;
         output.send(VncEvent::RawImage(*rect, pixels)).await?;
         Ok(())

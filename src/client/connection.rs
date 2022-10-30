@@ -103,6 +103,7 @@ where
 
         trace!("Start main loop");
         let mut raw_decoder = codec::RawDecoder::new();
+        let mut zrle_decoder = codec::ZrleDecoder::new();
         let pf = self.pixel_format.as_ref().unwrap();
         loop {
             tokio::select! {
@@ -130,7 +131,7 @@ where
                                         unimplemented!()
                                     }
                                     VncEncoding::Zrle => {
-                                        unimplemented!()
+                                        zrle_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
                                     _ => unimplemented!()
                                 }

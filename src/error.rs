@@ -15,6 +15,8 @@ pub enum VncError {
     WrongPixelFormat,
     #[error("Unkonw server message")]
     WrongServerMessage,
+    #[error("Image data cannot be decoded correctly")]
+    InvalidImageData,
     #[error("Vnc Error with message: {0}")]
     Custom(String),
 }
