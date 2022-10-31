@@ -13,7 +13,7 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 pub enum VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: FnOnce() -> String + 'static,
+    F: Future<Output = Result<String>> + 'static,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
@@ -23,7 +23,7 @@ where
 impl<S, F> VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + 'static,
-    F: FnOnce() -> String + 'static,
+    F: Future<Output = Result<String>> + 'static,
 {
     pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self>>>> {
         Box::pin(async move {
@@ -58,7 +58,7 @@ where
                         if connector.auth_methond.is_none() {
                             return Err(VncError::NoPassword.into());
                         }
-                        let credential = (connector.auth_methond.take().unwrap())();
+                        let credential = (connector.auth_methond.take().unwrap()).await?;
 
                         // auth
                         let auth = AuthHelper::read(&mut connector.stream, &credential).await?;
@@ -94,7 +94,7 @@ where
 pub struct VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: FnOnce() -> String + 'static,
+    F: Future<Output = Result<String>> + 'static,
 {
     stream: S,
     auth_methond: Option<F>,
@@ -107,7 +107,7 @@ where
 impl<S, F> VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: FnOnce() -> String + 'static,
+    F: Future<Output = Result<String>> + 'static,
 {
     pub fn new(stream: S) -> Self {
         Self {
