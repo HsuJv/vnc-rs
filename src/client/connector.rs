@@ -13,7 +13,7 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 pub enum VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: Future<Output = Result<String>> + 'static,
+    F: Future<Output = Result<String>>,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
@@ -94,7 +94,7 @@ where
 pub struct VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: Future<Output = Result<String>> + 'static,
+    F: Future<Output = Result<String>>,
 {
     stream: S,
     auth_methond: Option<F>,
@@ -107,7 +107,7 @@ where
 impl<S, F> VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: Future<Output = Result<String>> + 'static,
+    F: Future<Output = Result<String>>,
 {
     pub fn new(stream: S) -> Self {
         Self {

@@ -17,6 +17,7 @@ pub struct Decoder {
     ctrl: u8,
     filter: u8,
     palette: Vec<u8>,
+    alpha_shift: u32,
 }
 
 impl Decoder {
@@ -42,6 +43,18 @@ impl Decoder {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        let pixel_mask = (format.red_max as u32) << format.red_shift
+            | (format.green_max as u32) << format.green_shift
+            | (format.blue_max as u32) << format.blue_shift;
+
+        self.alpha_shift = match pixel_mask {
+            0xff_ff_ff_00 => 0,
+            0xff_ff_00_ff => 8,
+            0xff_00_ff_ff => 16,
+            0x00_ff_ff_ff => 24,
+            _ => unreachable!(),
+        };
+
         let ctrl = input.read_u8().await?;
         for i in 0..4 {
             if (ctrl >> i) & 1 == 1 {
@@ -112,37 +125,11 @@ impl Decoder {
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let mut color = [0; 3];
-        let alpha = 255;
         input.read_exact(&mut color).await?;
         let bpp = format.bits_per_pixel as usize / 8;
         let mut image = Vec::with_capacity(rect.width as usize * rect.height as usize * bpp);
 
-        let pixel_mask = (format.red_max as u32) << format.red_shift
-            | (format.green_max as u32) << format.green_shift
-            | (format.blue_max as u32) << format.blue_shift;
-
-        let alpha_shift = match pixel_mask {
-            0xff_ff_ff_00 => 0,
-            0xff_ff_00_ff => 8,
-            0xff_00_ff_ff => 16,
-            0x00_ff_ff_ff => 24,
-            _ => unreachable!(),
-        };
-        let true_color = if format.big_endian_flag > 0 {
-            // r, g, b
-            (((color[0] as u32 & format.red_max as u32) << format.red_shift)
-                | ((color[1] as u32 & format.green_max as u32) << format.green_shift)
-                | ((color[2] as u32 & format.blue_max as u32) << format.blue_shift)
-                | ((alpha as u32) << alpha_shift))
-                .to_be_bytes()
-        } else {
-            // b, g, r
-            (((color[2] as u32 & format.red_max as u32) << format.red_shift)
-                | ((color[1] as u32 & format.green_max as u32) << format.green_shift)
-                | ((color[0] as u32 & format.blue_max as u32) << format.blue_shift)
-                | ((alpha as u32) << alpha_shift))
-                .to_le_bytes()
-        };
+        let true_color = self.to_true_color(format, &color);
 
         for _ in 0..rect.width {
             for _ in 0..rect.height {
@@ -213,7 +200,7 @@ impl Decoder {
     async fn copy_filter<S>(
         &mut self,
         stream: u8,
-        _format: &PixelFormat,
+        format: &PixelFormat,
         rect: &Rect,
         input: &mut S,
         output: &Sender<VncEvent>,
@@ -240,8 +227,7 @@ impl Decoder {
         let mut image = Vec::with_capacity(uncompressed_size / 3 * 4);
         let mut j = 0;
         while j < uncompressed_size {
-            image.extend_from_slice(&data[j..j + 3]);
-            image.push(255);
+            image.extend_from_slice(&self.to_true_color(format, &data[j..j + 3]));
             j += 3;
         }
 
@@ -253,7 +239,7 @@ impl Decoder {
     async fn palette_filter<S>(
         &mut self,
         stream: u8,
-        _format: &PixelFormat,
+        format: &PixelFormat,
         rect: &Rect,
         input: &mut S,
         output: &Sender<VncEvent>,
@@ -288,9 +274,9 @@ impl Decoder {
         }
 
         if num_colors == 2 {
-            self.mono_rect(data, rect, output).await?
+            self.mono_rect(data, rect, format, output).await?
         } else {
-            self.palette_rect(data, rect, output).await?
+            self.palette_rect(data, rect, format, output).await?
         }
 
         Ok(())
@@ -300,6 +286,7 @@ impl Decoder {
         &mut self,
         data: Vec<u8>,
         rect: &Rect,
+        format: &PixelFormat,
         output: &Sender<VncEvent>,
     ) -> Result<()> {
         // Convert indexed (palette based) image data to RGB
@@ -317,10 +304,11 @@ impl Decoder {
                 for b in (0..=7).rev() {
                     dp = (y * rect.width as usize + x * 8 + 7 - b) * 4;
                     sp = (data[y * w + x] as usize >> b & 1) * 3;
-                    image[dp] = self.palette[sp];
-                    image[dp + 1] = self.palette[sp + 1];
-                    image[dp + 2] = self.palette[sp + 2];
-                    image[dp + 3] = 255;
+                    let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
+                    image[dp] = true_color[0];
+                    image[dp + 1] = true_color[1];
+                    image[dp + 2] = true_color[2];
+                    image[dp + 3] = true_color[3];
                 }
             }
             let x = w1;
@@ -328,10 +316,11 @@ impl Decoder {
             while b >= 8 - rect.width as usize % 8 {
                 dp = (y * rect.width as usize + x * 8 + 7 - b) * 4;
                 sp = (data[y * w + x] as usize >> b & 1) * 3;
-                image[dp] = self.palette[sp];
-                image[dp + 1] = self.palette[sp + 1];
-                image[dp + 2] = self.palette[sp + 2];
-                image[dp + 3] = 255;
+                let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
+                image[dp] = true_color[0];
+                image[dp + 1] = true_color[1];
+                image[dp + 2] = true_color[2];
+                image[dp + 3] = true_color[3];
                 b -= 1;
             }
         }
@@ -343,6 +332,7 @@ impl Decoder {
         &mut self,
         data: Vec<u8>,
         rect: &Rect,
+        format: &PixelFormat,
         output: &Sender<VncEvent>,
     ) -> Result<()> {
         // Convert indexed (palette based) image data to RGB
@@ -352,12 +342,21 @@ impl Decoder {
         let mut j = 0;
         while i < total {
             let sp = data[j] as usize * 3;
-            image.extend_from_slice(&self.palette[sp..sp + 3]);
-            image.push(255);
+            image.extend_from_slice(&self.to_true_color(format, &self.palette[sp..sp + 3]));
             i += 4;
             j += 1;
         }
         output.send(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
+    }
+
+    fn to_true_color(&self, format: &PixelFormat, color: &[u8]) -> [u8; 4] {
+        let alpha = 255;
+        // always rgb
+        (((color[0] as u32 & format.red_max as u32) << format.red_shift)
+            | ((color[1] as u32 & format.green_max as u32) << format.green_shift)
+            | ((color[2] as u32 & format.blue_max as u32) << format.blue_shift)
+            | ((alpha as u32) << self.alpha_shift))
+            .to_le_bytes()
     }
 }
