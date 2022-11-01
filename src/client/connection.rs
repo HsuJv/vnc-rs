@@ -45,6 +45,7 @@ impl ImageRect {
     }
 }
 
+/// The instance of a connected vnc client
 pub struct VncClient<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -61,7 +62,7 @@ impl<S> VncClient<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub fn new(
+    pub(super) fn new(
         stream: S,
         shared: bool,
         pixel_format: Option<PixelFormat>,
@@ -77,6 +78,13 @@ where
         }
     }
 
+    ///
+    /// Run the vnc engine
+    ///
+    /// Which will poll the data from the server and send output via `sender`
+    ///
+    /// Also poll the user input from the `recv`
+    ///
     pub async fn run(
         mut self,
         sender: Sender<VncEvent>,

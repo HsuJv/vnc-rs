@@ -39,6 +39,11 @@ tokio = { version = "^1", features = [
     "time"
     ]}
 
+[dev-dependencies]
+tracing-subscriber = { version = "^0.3" }
+minifb = "0.23.0"
+
+
 [profile.release]
 # Tell `rustc` to optimize for small code size.
 opt-level = "s"

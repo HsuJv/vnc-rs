@@ -2,6 +2,7 @@ use crate::VncError;
 use anyhow::{Context, Ok, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// All supported vnc encodings
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -29,6 +30,7 @@ impl From<VncEncoding> for u32 {
     }
 }
 
+/// All supported vnc versions
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq)]
 #[repr(u8)]
@@ -84,38 +86,53 @@ impl VncVersion {
     }
 }
 
-// No. of bytes Type            [Value] Description
-// 1            CARD8           bits-per-pixel
-// 1            CARD8           depth
-// 1            CARD8           big-endian-flag
-// 1            CARD8           true-color-flag
-// 2            CARD16          red-max
-// 2            CARD16          green-max
-// 2            CARD16          blue-max
-// 1            CARD8           red-shift
-// 1            CARD8           green-shift
-// 1            CARD8           blue-shift
-// 1            CARD8           padding
-
+///  Pixel Format Data Structure according to [RFC6143](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.4)
+///
+/// ```text
+/// +--------------+--------------+-----------------+
+/// | No. of bytes | Type [Value] | Description     |
+/// +--------------+--------------+-----------------+
+/// | 1            | U8           | bits-per-pixel  |
+/// | 1            | U8           | depth           |
+/// | 1            | U8           | big-endian-flag |
+/// | 1            | U8           | true-color-flag |
+/// | 2            | U16          | red-max         |
+/// | 2            | U16          | green-max       |
+/// | 2            | U16          | blue-max        |
+/// | 1            | U8           | red-shift       |
+/// | 1            | U8           | green-shift     |
+/// | 1            | U8           | blue-shift      |
+/// | 3            |              | padding         |
+/// +--------------+--------------+-----------------+
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct PixelFormat {
-    // the number of bits used for each pixel value on the wire
-    // 8, 16, 32(usually) only
+    /// the number of bits used for each pixel value on the wire
+    ///
+    /// 8, 16, 32(usually) only
+    ///
     pub bits_per_pixel: u8,
-    // Although the depth should
-    // be consistent with the bits-per-pixel and the various -max values,
-    // clients do not use it when interpreting pixel data.
+    /// Although the depth should
+    ///
+    /// be consistent with the bits-per-pixel and the various -max values,
+    ///
+    /// clients do not use it when interpreting pixel data.
+    ///
     pub depth: u8,
-    // true if multi-byte pixels are interpreted as big endian
+    /// true if multi-byte pixels are interpreted as big endian
+    ///
     pub big_endian_flag: u8,
-    // true then the last six items specify how to extract the red, green and blue intensities from the pixel value
+    /// true then the last six items specify how to extract the red, green and blue intensities from the pixel value
+    ///
     pub true_color_flag: u8,
-    // the next three always in big-endian order
-    // no matter how the `big_endian_flag` is set
+    /// the next three always in big-endian order
+    /// no matter how the `big_endian_flag` is set
+    ///
     pub red_max: u16,
     pub green_max: u16,
     pub blue_max: u16,
-    // the number of shifts needed to get the red value in a pixel to the least significant bit
+    /// the number of shifts needed to get the red value in a pixel to the least significant bit
+    ///
     pub red_shift: u8,
     pub green_shift: u8,
     pub blue_shift: u8,
