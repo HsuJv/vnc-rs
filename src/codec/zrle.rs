@@ -4,7 +4,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
     sync::mpsc::Sender,
 };
-use tracing::{error};
+use tracing::error;
 
 use super::{uninit_vec, zlib::ZlibReader};
 

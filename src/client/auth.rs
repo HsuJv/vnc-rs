@@ -1,5 +1,5 @@
 use super::security;
-use crate::{VncError, VncVersion};
+use crate::VncVersion;
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -39,25 +39,24 @@ impl SecurityType {
             VncVersion::RFB33 => {
                 let security_type = reader.read_u32().await?;
                 Ok(vec![(security_type as u8).into()])
-            }
-            _ => {
-                // +--------------------------+-------------+--------------------------+
-                // | No. of bytes             | Type        | Description              |
-                // |                          | [Value]     |                          |
-                // +--------------------------+-------------+--------------------------+
-                // | 1                        | U8          | number-of-security-types |
-                // | number-of-security-types | U8 array    | security-types           |
-                // +--------------------------+-------------+--------------------------+
-                let num = reader.read_u8().await?;
+            } // _ => {
+              //     // +--------------------------+-------------+--------------------------+
+              //     // | No. of bytes             | Type        | Description              |
+              //     // |                          | [Value]     |                          |
+              //     // +--------------------------+-------------+--------------------------+
+              //     // | 1                        | U8          | number-of-security-types |
+              //     // | number-of-security-types | U8 array    | security-types           |
+              //     // +--------------------------+-------------+--------------------------+
+              //     let num = reader.read_u8().await?;
 
-                if num == 0 {
-                    let _ = reader.read_u32().await?;
-                    let mut err_msg = String::new();
-                    reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::Custom(err_msg).into());
-                }
-                unimplemented!()
-            }
+              //     if num == 0 {
+              //         let _ = reader.read_u32().await?;
+              //         let mut err_msg = String::new();
+              //         reader.read_to_string(&mut err_msg).await?;
+              //         return Err(VncError::Custom(err_msg).into());
+              //     }
+              //     unimplemented!()
+              // }
         }
     }
 }
