@@ -349,8 +349,6 @@ impl Decoder {
         let mut sp = 0;
         let mut dp = 0;
 
-        tracing::info!("Data {}, rect {:?}", data.len(), rect);
-
         for y in 0..rect.height as usize {
             let (this_row, prev_row) = match y & 1 {
                 0 => (&mut row_0, &mut row_1),
