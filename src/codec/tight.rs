@@ -347,17 +347,20 @@ impl Decoder {
         let max = [format.red_max, format.green_max, format.blue_max];
         let shift = [format.red_shift, format.green_shift, format.blue_shift];
         let mut sp = 0;
+        let mut dp = 0;
 
-        for (row_index, y) in (0..rect.height as usize).enumerate() {
-            let (this_row, prev_row) = match row_index & 2 {
+        tracing::info!("Data {}, rect {:?}", data.len(), rect);
+
+        for y in 0..rect.height as usize {
+            let (this_row, prev_row) = match y & 1 {
                 0 => (&mut row_0, &mut row_1),
                 1 => (&mut row_1, &mut row_0),
                 _ => unreachable!(),
             };
             let mut x = 3;
-            let mut true_color = [0; 4];
             while x < row_len {
-                true_color = self.to_true_color(format, &data[sp..sp + 3]);
+                let rgb = &data[sp..sp + 3];
+                let mut color = 0;
                 for index in 0..3 {
                     let d = prev_row[index + x] as i32 + this_row[index + x - 3] as i32
                         - prev_row[index + x - 3] as i32;
@@ -368,17 +371,19 @@ impl Decoder {
                     } else {
                         d as u16
                     };
-                    this_row[index + x] = (converted + data[sp + index] as u16) & max[index];
-                    true_color = (u32::from_le_bytes(true_color)
-                        | (this_row[x + index] as u32 & max[index] as u32) << shift[index] as u32)
-                        .to_le_bytes();
+                    this_row[index + x] = (converted + rgb[index] as u16) & max[index];
+                    color |= (this_row[x + index] as u32 & max[index] as u32) << shift[index];
                 }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        color.to_le_bytes().as_ptr(),
+                        image.as_mut_ptr().add(dp),
+                        4,
+                    )
+                }
+                dp += 4;
                 sp += 3;
                 x += 3;
-            }
-            let dp = (x / 3 - 1) + y * rect.width as usize;
-            unsafe {
-                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
             }
         }
 
