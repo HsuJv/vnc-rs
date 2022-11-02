@@ -81,8 +81,23 @@ where
                     } else {
                         // choose a auth method
                         if security_types.contains(&SecurityType::VncAuth) {
-                            SecurityType::write(&SecurityType::VncAuth, &mut connector.stream)
-                                .await?;
+                            if connector.rfb_version != VncVersion::RFB33 {
+                                // In the security handshake (Section 7.1.2), rather than a two-way
+                                // negotiation, the server decides the security type and sends a single
+                                // word:
+
+                                //            +--------------+--------------+---------------+
+                                //            | No. of bytes | Type [Value] | Description   |
+                                //            +--------------+--------------+---------------+
+                                //            | 4            | U32          | security-type |
+                                //            +--------------+--------------+---------------+
+
+                                // The security-type may only take the value 0, 1, or 2.  A value of 0
+                                // means that the connection has failed and is followed by a string
+                                // giving the reason, as described in Section 7.1.2.
+                                SecurityType::write(&SecurityType::VncAuth, &mut connector.stream)
+                                    .await?;
+                            }
                         } else {
                             let msg = "Security type apart from Vnc Auth has not been implemented";
                             return Err(VncError::Custom(msg.to_owned()).into());
