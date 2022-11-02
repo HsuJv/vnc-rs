@@ -1,8 +1,8 @@
 use crate::{PixelFormat, Rect, VncError, VncEvent};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use std::io::Read;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt},
     sync::mpsc::Sender,
 };
 use tracing::error;
@@ -41,7 +41,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let pixel_mask = (format.red_max as u32) << format.red_shift
             | (format.green_max as u32) << format.green_shift
@@ -92,7 +92,7 @@ impl Decoder {
 
     async fn read_data<S>(&mut self, input: &mut S) -> Result<Vec<u8>>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let len = {
             let mut len;
@@ -122,7 +122,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let mut color = [0; 3];
         input.read_exact(&mut color).await?;
@@ -148,7 +148,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let data = self.read_data(input).await?;
         output.send(VncEvent::JpegImage(*rect, data)).await?;
@@ -163,7 +163,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         self.filter = {
             if self.ctrl & 0x4 == 4 {
@@ -187,8 +187,8 @@ impl Decoder {
             }
             2 => {
                 // gradient
-                error!("Gradient filter not implemented");
-                Err(VncError::InvalidImageData.into())
+                self.gradient_filter(stream_id, format, rect, input, output)
+                    .await
             }
             _ => {
                 error!("Illegal tight filter received (filter: {})", self.filter);
@@ -206,24 +206,16 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let uncompressed_size = rect.width as usize * rect.height as usize * 3;
         if uncompressed_size == 0 {
             return Ok(());
         };
 
-        let mut data;
-        if uncompressed_size < 12 {
-            data = uninit_vec(uncompressed_size);
-            input.read_exact(&mut data).await?;
-        } else {
-            let d = self.read_data(input).await?;
-            let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
-            data = uninit_vec(uncompressed_size);
-            reader.read_exact(&mut data)?;
-            self.zlibs[stream as usize] = Some(reader.into_inner()?);
-        }
+        let data = self
+            .read_tight_data(stream, input, uncompressed_size)
+            .await?;
         let mut image = Vec::with_capacity(uncompressed_size / 3 * 4);
         let mut j = 0;
         while j < uncompressed_size {
@@ -245,7 +237,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let num_colors = input.read_u8().await? as usize + 1;
         let palette_size = num_colors * 3;
@@ -261,17 +253,9 @@ impl Decoder {
             return Ok(());
         }
 
-        let mut data;
-        if uncompressed_size < 12 {
-            data = uninit_vec(uncompressed_size);
-            input.read_exact(&mut data).await?;
-        } else {
-            let d = self.read_data(input).await?;
-            let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
-            data = uninit_vec(uncompressed_size);
-            reader.read_exact(&mut data)?;
-            self.zlibs[stream as usize] = Some(reader.into_inner()?);
-        }
+        let data = self
+            .read_tight_data(stream, input, uncompressed_size)
+            .await?;
 
         if num_colors == 2 {
             self.mono_rect(data, rect, format, output).await?
@@ -290,39 +274,23 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()> {
         // Convert indexed (palette based) image data to RGB
-        // TODO: reduce number of calculations inside loop
-        let total = rect.width as usize * rect.height as usize * 4;
-        let mut image = uninit_vec(total);
-
-        let w = (rect.width as usize + 7) / 8;
-        let w1 = rect.width as usize / 8;
-
-        for y in 0..rect.height as usize {
-            let mut dp;
-            let mut sp;
-            for x in 0..w1 {
-                for b in (0..=7).rev() {
-                    dp = (y * rect.width as usize + x * 8 + 7 - b) * 4;
-                    sp = (data[y * w + x] as usize >> b & 1) * 3;
-                    let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-                    image[dp] = true_color[0];
-                    image[dp + 1] = true_color[1];
-                    image[dp + 2] = true_color[2];
-                    image[dp + 3] = true_color[3];
-                }
+        let total = rect.width as usize * rect.height as usize;
+        let mut image = uninit_vec(total * 4);
+        let mut offset = 8_usize;
+        let mut index = -1_isize;
+        let mut dp = 0;
+        for i in 0..total {
+            if offset == 0 || i % rect.width as usize == 0 {
+                offset = 8;
+                index += 1;
             }
-            let x = w1;
-            let mut b = 7;
-            while b >= 8 - rect.width as usize % 8 {
-                dp = (y * rect.width as usize + x * 8 + 7 - b) * 4;
-                sp = (data[y * w + x] as usize >> b & 1) * 3;
-                let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-                image[dp] = true_color[0];
-                image[dp + 1] = true_color[1];
-                image[dp + 2] = true_color[2];
-                image[dp + 3] = true_color[3];
-                b -= 1;
+            offset -= 1;
+            let sp = ((data[index as usize] >> offset) & 0x01) as usize * 3;
+            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
+            unsafe {
+                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
             }
+            dp += 4;
         }
         output.send(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
@@ -336,18 +304,109 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()> {
         // Convert indexed (palette based) image data to RGB
-        let total = rect.width as usize * rect.height as usize * 4;
-        let mut image = Vec::with_capacity(total);
+        let total = rect.width as usize * rect.height as usize;
+        let mut image = uninit_vec(total * 4);
         let mut i = 0;
-        let mut j = 0;
+        let mut dp = 0;
         while i < total {
-            let sp = data[j] as usize * 3;
-            image.extend_from_slice(&self.to_true_color(format, &self.palette[sp..sp + 3]));
-            i += 4;
-            j += 1;
+            let sp = data[i] as usize * 3;
+            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
+            unsafe {
+                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
+            }
+            dp += 4;
+            i += 1;
         }
         output.send(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
+    }
+
+    async fn gradient_filter<S>(
+        &mut self,
+        stream: u8,
+        format: &PixelFormat,
+        rect: &Rect,
+        input: &mut S,
+        output: &Sender<VncEvent>,
+    ) -> Result<()>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let uncompressed_size = rect.width as usize * rect.height as usize * 3;
+        if uncompressed_size == 0 {
+            return Ok(());
+        };
+        let data = self
+            .read_tight_data(stream, input, uncompressed_size)
+            .await?;
+        let mut image = uninit_vec(rect.width as usize * rect.height as usize * 4);
+
+        let row_len = rect.width as usize * 3 + 3;
+        let mut row_0 = vec![0_u16; row_len];
+        let mut row_1 = vec![0_u16; row_len];
+        let max = [format.red_max, format.green_max, format.blue_max];
+        let shift = [format.red_shift, format.green_shift, format.blue_shift];
+        let mut sp = 0;
+
+        for (row_index, y) in (0..rect.height as usize).enumerate() {
+            let (this_row, prev_row) = match row_index & 2 {
+                0 => (&mut row_0, &mut row_1),
+                1 => (&mut row_1, &mut row_0),
+                _ => unreachable!(),
+            };
+            let mut x = 3;
+            let mut true_color = [0; 4];
+            while x < row_len {
+                true_color = self.to_true_color(format, &data[sp..sp + 3]);
+                for index in 0..3 {
+                    let d = prev_row[index + x] as i32 + this_row[index + x - 3] as i32
+                        - prev_row[index + x - 3] as i32;
+                    let converted = if d < 0 {
+                        0
+                    } else if d > max[index] as i32 {
+                        max[index]
+                    } else {
+                        d as u16
+                    };
+                    this_row[index + x] = (converted + data[sp + index] as u16) & max[index];
+                    true_color = (u32::from_le_bytes(true_color)
+                        | (this_row[x + index] as u32 & max[index] as u32) << shift[index] as u32)
+                        .to_le_bytes();
+                }
+                sp += 3;
+                x += 3;
+            }
+            let dp = (x / 3 - 1) + y * rect.width as usize;
+            unsafe {
+                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
+            }
+        }
+
+        output.send(VncEvent::RawImage(*rect, image)).await?;
+        Ok(())
+    }
+
+    async fn read_tight_data<S>(
+        &mut self,
+        stream: u8,
+        input: &mut S,
+        uncompressed_size: usize,
+    ) -> Result<Vec<u8>>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let mut data;
+        if uncompressed_size < 12 {
+            data = uninit_vec(uncompressed_size);
+            input.read_exact(&mut data).await?;
+        } else {
+            let d = self.read_data(input).await?;
+            let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
+            data = uninit_vec(uncompressed_size);
+            reader.read_exact(&mut data)?;
+            self.zlibs[stream as usize] = Some(reader.into_inner()?);
+        };
+        Ok(data)
     }
 
     fn to_true_color(&self, format: &PixelFormat, color: &[u8]) -> [u8; 4] {
