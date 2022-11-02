@@ -36,16 +36,16 @@ impl From<VncEncoding> for u32 {
 #[repr(u8)]
 pub enum VncVersion {
     RFB33,
-    // RFB37,
-    // RFB38,
+    RFB37,
+    RFB38,
 }
 
 impl From<[u8; 12]> for VncVersion {
     fn from(version: [u8; 12]) -> Self {
         match &version {
             b"RFB 003.003\n" => VncVersion::RFB33,
-            // b"RFB 003.007\n" => VncVersion::RFB37,
-            // b"RFB 003.008\n" => VncVersion::RFB38,
+            b"RFB 003.007\n" => VncVersion::RFB37,
+            b"RFB 003.008\n" => VncVersion::RFB38,
             // https://www.rfc-editor.org/rfc/rfc6143#section-7.1.1
             //  Other version numbers are reported by some servers and clients,
             //  but should be interpreted as 3.3 since they do not implement the
@@ -59,8 +59,8 @@ impl From<VncVersion> for &[u8; 12] {
     fn from(version: VncVersion) -> Self {
         match version {
             VncVersion::RFB33 => b"RFB 003.003\n",
-            // VncVersion::RFB37 => b"RFB 003.007\n",
-            // VncVersion::RFB38 => b"RFB 003.008\n",
+            VncVersion::RFB37 => b"RFB 003.007\n",
+            VncVersion::RFB38 => b"RFB 003.008\n",
         }
     }
 }

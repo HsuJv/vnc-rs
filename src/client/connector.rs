@@ -5,7 +5,7 @@ use super::{
 use anyhow::{Ok, Result};
 use std::future::Future;
 use std::pin::Pin;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tracing::{info, trace};
 
 use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
@@ -31,6 +31,11 @@ where
                 VncState::Handshake(mut connector) => {
                     // Read the rfbversion informed by the server
                     let rfbversion = VncVersion::read(&mut connector.stream).await?;
+                    trace!(
+                        "Our version {:?}, server version {:?}",
+                        connector.rfb_version,
+                        rfbversion
+                    );
                     let rfbversion = if connector.rfb_version < rfbversion {
                         connector.rfb_version
                     } else {
@@ -49,15 +54,45 @@ where
 
                     assert!(!security_types.is_empty());
 
-                    if let SecurityType::None = security_types[0] {
-                        trace!("No auth needed");
+                    if security_types.contains(&SecurityType::None) {
+                        match connector.rfb_version {
+                            VncVersion::RFB33 => {
+                                // If the security-type is 1, for no authentication, the server does not
+                                // send the SecurityResult message but proceeds directly to the
+                                // initialization messages (Section 7.3).
+                                info!("No auth needed in vnc3.3");
+                            }
+                            VncVersion::RFB37 => {
+                                // After the security handshake, if the security-type is 1, for no
+                                // authentication, the server does not send the SecurityResult message
+                                // but proceeds directly to the initialization messages (Section 7.3).
+                                info!("No auth needed in vnc3.7");
+                                SecurityType::write(&SecurityType::None, &mut connector.stream)
+                                    .await?;
+                            }
+                            VncVersion::RFB38 => {
+                                info!("No auth needed in vnc3.8");
+                                SecurityType::write(&SecurityType::None, &mut connector.stream)
+                                    .await?;
+                                let mut ok = [0; 4];
+                                connector.stream.read_exact(&mut ok).await?;
+                            }
+                        }
                     } else {
                         // choose a auth method
+                        if security_types.contains(&SecurityType::VncAuth) {
+                            SecurityType::write(&SecurityType::VncAuth, &mut connector.stream)
+                                .await?;
+                        } else {
+                            let msg = "Security type apart from Vnc Auth has not been implemented";
+                            return Err(VncError::Custom(msg.to_owned()).into());
+                        }
 
                         // get password
                         if connector.auth_methond.is_none() {
                             return Err(VncError::NoPassword.into());
                         }
+
                         let credential = (connector.auth_methond.take().unwrap()).await?;
 
                         // auth
@@ -65,7 +100,17 @@ where
                         auth.write(&mut connector.stream).await?;
                         let result = auth.finish(&mut connector.stream).await?;
                         if let AuthResult::Failed = result {
-                            return Err(VncError::WrongPassword.into());
+                            if let VncVersion::RFB37 = connector.rfb_version {
+                                // In VNC Authentication (Section 7.2.2), if the authentication fails,
+                                // the server sends the SecurityResult message, but does not send an
+                                // error message before closing the connection.
+                                return Err(VncError::WrongPassword.into());
+                            } else {
+                                let _ = connector.stream.read_u32().await?;
+                                let mut err_msg = String::new();
+                                connector.stream.read_to_string(&mut err_msg).await?;
+                                return Err(VncError::Custom(err_msg).into());
+                            }
                         }
                     }
                     info!("auth done, client connected");
@@ -143,7 +188,7 @@ where
             stream,
             auth_methond: None,
             allow_shared: true,
-            rfb_version: VncVersion::RFB33,
+            rfb_version: VncVersion::RFB38,
             pixel_format: None,
             encodings: Vec::new(),
         }

@@ -1,5 +1,5 @@
 use super::security;
-use crate::VncVersion;
+use crate::{VncError, VncVersion};
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -10,17 +10,26 @@ pub(super) enum SecurityType {
     Invalid = 0,
     None = 1,
     VncAuth = 2,
-    // RA2 = 5,
-    // RA2ne = 6,
-    // Tight = 16,
-    // Ultra = 17,
-    // TLS = 18,
-    // VeNCrypt = 19,
+    RA2 = 5,
+    RA2ne = 6,
+    Tight = 16,
+    Ultra = 17,
+    Tls = 18,
+    VeNCrypt = 19,
+    GtkVncSasl = 20,
+    Md5Hash = 21,
+    ColinDeanXvp = 22,
 }
 
-impl From<u8> for SecurityType {
-    fn from(num: u8) -> Self {
-        unsafe { std::mem::transmute(num) }
+impl TryFrom<u8> for SecurityType {
+    type Error = VncError;
+    fn try_from(num: u8) -> Result<Self, Self::Error> {
+        match num {
+            0 | 1 | 2 | 5 | 6 | 16 | 17 | 18 | 19 | 20 | 21 | 22 => {
+                Ok(unsafe { std::mem::transmute(num) })
+            }
+            invalid => Err(VncError::InvalidSecurityTyep(invalid)),
+        }
     }
 }
 
@@ -38,26 +47,47 @@ impl SecurityType {
         match version {
             VncVersion::RFB33 => {
                 let security_type = reader.read_u32().await?;
-                Ok(vec![(security_type as u8).into()])
-            } // _ => {
-              //     // +--------------------------+-------------+--------------------------+
-              //     // | No. of bytes             | Type        | Description              |
-              //     // |                          | [Value]     |                          |
-              //     // +--------------------------+-------------+--------------------------+
-              //     // | 1                        | U8          | number-of-security-types |
-              //     // | number-of-security-types | U8 array    | security-types           |
-              //     // +--------------------------+-------------+--------------------------+
-              //     let num = reader.read_u8().await?;
+                let security_type = (security_type as u8).try_into()?;
+                if let SecurityType::Invalid = security_type {
+                    let _ = reader.read_u32().await?;
+                    let mut err_msg = String::new();
+                    reader.read_to_string(&mut err_msg).await?;
+                    return Err(VncError::Custom(err_msg).into());
+                }
+                Ok(vec![security_type])
+            }
+            _ => {
+                // +--------------------------+-------------+--------------------------+
+                // | No. of bytes             | Type        | Description              |
+                // |                          | [Value]     |                          |
+                // +--------------------------+-------------+--------------------------+
+                // | 1                        | U8          | number-of-security-types |
+                // | number-of-security-types | U8 array    | security-types           |
+                // +--------------------------+-------------+--------------------------+
+                let num = reader.read_u8().await?;
 
-              //     if num == 0 {
-              //         let _ = reader.read_u32().await?;
-              //         let mut err_msg = String::new();
-              //         reader.read_to_string(&mut err_msg).await?;
-              //         return Err(VncError::Custom(err_msg).into());
-              //     }
-              //     unimplemented!()
-              // }
+                if num == 0 {
+                    let _ = reader.read_u32().await?;
+                    let mut err_msg = String::new();
+                    reader.read_to_string(&mut err_msg).await?;
+                    return Err(VncError::Custom(err_msg).into());
+                }
+                let mut sec_types = vec![];
+                for _ in 0..num {
+                    sec_types.push(reader.read_u8().await?.try_into()?);
+                }
+                tracing::trace!("Server supported security type: {:?}", sec_types);
+                Ok(sec_types)
+            }
         }
+    }
+
+    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<()>
+    where
+        S: AsyncWrite + Unpin,
+    {
+        writer.write_all(&[(*self).into()]).await?;
+        Ok(())
     }
 }
 
