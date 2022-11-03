@@ -1,6 +1,6 @@
 # vnc-rs
 
-[![Build](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml/badge.svg)](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml)
+[![Build](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml)
 [![API Docs](https://docs.rs/vnc-rs/badge.svg)](https://docs.rs/vnc-rs/latest/vnc)
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![LICENSE](https://img.shields.io/badge/license-Apache-blue.svg)](LICENSE-APACHE)
@@ -34,7 +34,7 @@ I've only tried video streaming from tight vnc server on win10/ubuntu 20.04 and 
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
-But without any idea, when I send setClientEncoding(TRLE) to the vnc server it response with raw rectangles without any encoding. So Trle encoding is not testes. But the trle decoding routine shall be right since it was split from zrle routine
+But without any idea, when I send setClientEncoding(TRLE) to the vnc server it response with raw rectangles without any encoding. So Trle encoding is not tested. But the trle decoding routine shall be right since it was split from zrle routine
 
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
 
