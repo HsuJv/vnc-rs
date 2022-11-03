@@ -19,7 +19,7 @@ jobs:
     - name: Build
       run: cargo build
     - name: Wasm32 build
-      run: cargo build --target wasm32-unknown-unknown
+      run: rustup target add wasm32-unknown-unknown && cargo build --target wasm32-unknown-unknown
     - name: Test
       run: cargo test
     - name: Doc test
