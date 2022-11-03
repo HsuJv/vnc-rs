@@ -1,6 +1,6 @@
 # vnc-rs
 
-[![Build Status](https://github.com/HsuJv/vnc-rs/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/HsuJv/vnc-rs/actions/workflows/rust.yml)
+[![Build](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml/badge.svg)](https://github.com/HsuJv/vnc-rs/actions/workflows/build.yml)
 [![API Docs](https://docs.rs/vnc-rs/badge.svg)](https://docs.rs/vnc-rs/latest/vnc)
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![LICENSE](https://img.shields.io/badge/license-Apache-blue.svg)](LICENSE-APACHE)
