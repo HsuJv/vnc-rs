@@ -113,6 +113,7 @@ where
         let mut raw_decoder = codec::RawDecoder::new();
         let mut zrle_decoder = codec::ZrleDecoder::new();
         let mut tight_decoder = codec::TightDecoder::new();
+        let mut trle_decoder = codec::TrleDecoder::new();
         let mut cursor = codec::CursorDecoder::new();
         let pf = self.pixel_format.as_ref().unwrap();
         loop {
@@ -124,6 +125,7 @@ where
                         ServerMsg::FramebufferUpdate(rect_num) => {
                             for _ in 0..rect_num {
                                 let rect = ImageRect::read(&mut self.stream).await?;
+                                trace!("Encoding: {:?}", rect.encoding);
 
                                 match rect.encoding {
                                     VncEncoding::Raw => {
@@ -139,6 +141,9 @@ where
                                     }
                                     VncEncoding::Tight => {
                                         tight_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
+                                    }
+                                    VncEncoding::Trle => {
+                                        trle_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
                                     }
                                     VncEncoding::Zrle => {
                                         zrle_decoder.decode(pf, &rect.rect, &mut self.stream, &sender).await?;
