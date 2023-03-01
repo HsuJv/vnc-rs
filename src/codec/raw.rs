@@ -1,7 +1,7 @@
 use crate::{PixelFormat, Rect, VncEvent};
 use anyhow::Result;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt},
     sync::mpsc::Sender,
 };
 
@@ -22,7 +22,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         // +----------------------------+--------------+-------------+
         // | No. of bytes               | Type [Value] | Description |

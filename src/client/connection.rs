@@ -154,6 +154,9 @@ where
                                     VncEncoding::DesktopSizePseudo => {
                                         sender.send(VncEvent::SetResolution((rect.rect.width, rect.rect.height).into())).await?;
                                     }
+                                    VncEncoding::LastRectPseudo => {
+                                        break;
+                                    }
                                 }
                             }
                         }

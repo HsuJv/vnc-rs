@@ -1,7 +1,7 @@
 use crate::{PixelFormat, Rect, VncError, VncEvent};
 use anyhow::Result;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt},
     sync::mpsc::Sender,
 };
 use tracing::error;
@@ -61,7 +61,7 @@ impl Decoder {
         output: &Sender<VncEvent>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + Unpin,
     {
         let data_len = input.read_u32().await? as usize;
         let mut zlib_data = uninit_vec(data_len);

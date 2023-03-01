@@ -10,17 +10,68 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  cargo_fmt:
+    name: Check cargo formatting
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run cargo fmt
+        run: cargo fmt --all -- --check
+
+  cargo_clippy:
+    name: Check cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Clippy
+        run: rustup component add clippy
+      - name: Clippy (no features enabled)
+        run: cargo clippy -- -D warnings
+      - name: Clippy (all features enabled)
+        run: cargo clippy --all-features -- -D warnings
+
+  build-linux:
+    name: Build check on linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Linux (no features enabled)
+        run: cargo build --verbose
+      - name: Build Linux (all features enabled)
+        run: cargo build --verbose --all-features
+  
+  build-wasm32:
+    name: Build check for wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Add wasm32
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build wasm32 (no features enabled)
+        run: cargo build --target wasm32-unknown-unknown --verbose
+      - name: Build wasm32 (all features enabled)
+        run: cargo build --target wasm32-unknown-unknown --verbose --all-features
+
+  build-windows:
+    name: Build check on windows
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Windows (no features enabled)
+        run: cargo build --verbose
+      - name: Build Windows (all features enabled)
+        run: cargo build --verbose --all-features
+
+  cargo-test:
+    name: Check Cargo test
+    runs-on: ubuntu-latest
+    container: 
+      image: alpine:latest
+    env:
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build
-    - name: Wasm32 build
-      run: rustup target add wasm32-unknown-unknown && cargo build --target wasm32-unknown-unknown
-    - name: Test
-      run: cargo test
-    - name: Doc test
-      run: cargo test --doc
+      - uses: actions/checkout@v3
+      - name: Test
+        run: cargo test --all-features
+      - name: Doc test
+        run: cargo test --doc --all-features

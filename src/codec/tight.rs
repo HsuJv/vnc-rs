@@ -104,7 +104,7 @@ impl Decoder {
 
                 if byte & 0x80 == 0x80 {
                     byte = input.read_u8().await? as usize;
-                    len |= (byte as usize) << 14;
+                    len |= byte << 14;
                 }
             }
             len
