@@ -1,9 +1,7 @@
 use crate::{PixelFormat, Rect, VncError, VncEvent};
 use anyhow::Result;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::mpsc::Sender,
-};
+use std::future::Future;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
 use super::{uninit_vec, zlib::ZlibReader};
@@ -53,15 +51,17 @@ impl Decoder {
         }
     }
 
-    pub async fn decode<S>(
+    pub async fn decode<S, F, Fut>(
         &mut self,
         format: &PixelFormat,
         rect: &Rect,
         input: &mut S,
-        output: &Sender<VncEvent>,
+        output_func: &F,
     ) -> Result<()>
     where
         S: AsyncRead + Unpin,
+        F: Fn(VncEvent) -> Fut,
+        Fut: Future<Output = Result<()>>,
     {
         let data_len = input.read_u32().await? as usize;
         let mut zlib_data = uninit_vec(data_len);
@@ -218,17 +218,16 @@ impl Decoder {
                         return Err(VncError::InvalidImageData.into());
                     }
                 }
-                output
-                    .send(VncEvent::RawImage(
-                        Rect {
-                            x: rect.x + x,
-                            y: rect.y + y,
-                            width,
-                            height,
-                        },
-                        pixels,
-                    ))
-                    .await?;
+                output_func(VncEvent::RawImage(
+                    Rect {
+                        x: rect.x + x,
+                        y: rect.y + y,
+                        width,
+                        height,
+                    },
+                    pixels,
+                ))
+                .await?;
                 x += width;
             }
             y += height;

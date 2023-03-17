@@ -1,9 +1,7 @@
 use crate::{PixelFormat, Rect, VncEvent};
 use anyhow::Result;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::mpsc::Sender,
-};
+use std::future::Future;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::uninit_vec;
 
@@ -14,15 +12,17 @@ impl Decoder {
         Self {}
     }
 
-    pub async fn decode<S>(
+    pub async fn decode<S, F, Fut>(
         &mut self,
         format: &PixelFormat,
         rect: &Rect,
         input: &mut S,
-        output: &Sender<VncEvent>,
+        output_func: &F,
     ) -> Result<()>
     where
         S: AsyncRead + Unpin,
+        F: Fn(VncEvent) -> Fut,
+        Fut: Future<Output = Result<()>>,
     {
         // +----------------------------+--------------+-------------+
         // | No. of bytes               | Type [Value] | Description |
@@ -33,7 +33,7 @@ impl Decoder {
         let buffer_size = bpp as usize * rect.height as usize * rect.width as usize;
         let mut pixels = uninit_vec(buffer_size);
         input.read_exact(&mut pixels).await?;
-        output.send(VncEvent::RawImage(*rect, pixels)).await?;
+        output_func(VncEvent::RawImage(*rect, pixels)).await?;
         Ok(())
     }
 }

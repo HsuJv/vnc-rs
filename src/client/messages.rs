@@ -2,6 +2,7 @@ use crate::{PixelFormat, Rect, VncEncoding, VncError};
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+#[derive(Debug)]
 pub(super) enum ClientMsg {
     SetPixelFormat(PixelFormat),
     SetEncodings(Vec<VncEncoding>),

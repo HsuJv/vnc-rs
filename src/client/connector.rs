@@ -12,17 +12,17 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 
 pub enum VncState<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Future<Output = Result<String>>,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
-    Connected(VncClient<S>),
+    Connected(VncClient),
 }
 
 impl<S, F> VncState<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Future<Output = Result<String>> + 'static,
 {
     pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self>>>> {
@@ -130,19 +130,22 @@ where
                     }
                     info!("auth done, client connected");
 
-                    Ok(VncState::Connected(VncClient::new(
-                        connector.stream,
-                        connector.allow_shared,
-                        connector.pixel_format,
-                        connector.encodings,
-                    )))
+                    Ok(VncState::Connected(
+                        VncClient::new(
+                            connector.stream,
+                            connector.allow_shared,
+                            connector.pixel_format,
+                            connector.encodings,
+                        )
+                        .await?,
+                    ))
                 }
                 _ => unreachable!(),
             }
         })
     }
 
-    pub fn finish(self) -> Result<VncClient<S>> {
+    pub fn finish(self) -> Result<VncClient> {
         if let VncState::Connected(client) = self {
             Ok(client)
         } else {
@@ -154,7 +157,7 @@ where
 /// Connection Builder to setup a vnc client
 pub struct VncConnector<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Future<Output = Result<String>>,
 {
     stream: S,
@@ -167,7 +170,7 @@ where
 
 impl<S, F> VncConnector<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Future<Output = Result<String>>,
 {
     /// To new a vnc client configuration with stream `S`
