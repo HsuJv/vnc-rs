@@ -130,7 +130,7 @@ impl VncInner {
 
             let pf = pixel_format.as_ref().unwrap();
             if let Err(e) =
-                asycn_vnc_read_loop(&mut conn_ch_rx, &pf, &output_func, decoding_stop_rx).await
+                asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
             {
                 let _ = output_func(VncEvent::Error(e.to_string())).await;
             }
