@@ -154,20 +154,28 @@ async fn main() -> Result<()> {
         .try_start()
         .await?
         .finish()?;
-    let (vnc_event_sender, mut vnc_event_receiver) = tokio::sync::mpsc::channel(100);
-    let (x11_event_sender, x11_event_receiver) = tokio::sync::mpsc::channel(100);
-    tokio::spawn(async move { vnc.run(vnc_event_sender, x11_event_receiver).await.unwrap() });
 
     let mut canvas = CanvasUtils::new()?;
 
-    while let Some(event) = vnc_event_receiver.recv().await {
-        canvas.hande_vnc_event(event)?;
-        while let Ok(e) = vnc_event_receiver.try_recv() {
-            canvas.hande_vnc_event(e)?;
+    let mut now = std::time::Instant::now();
+    loop {
+        match vnc.poll_event().await {
+            Ok(Some(e)) => {
+                let _ = canvas.hande_vnc_event(e);
+            }
+            Ok(None) => (),
+            Err(e) => {
+                tracing::error!("{}", e.to_string());
+                break;
+            }
         }
-        canvas.flush()?;
-        let _ = x11_event_sender.send(X11Event::Refresh).await;
+        if now.elapsed().as_millis() > 16 {
+            let _ = canvas.flush();
+            let _ = vnc.input(X11Event::Refresh).await;
+            now = std::time::Instant::now();
+        }
     }
     canvas.close();
+    let _ = vnc.close().await;
     Ok(())
 }

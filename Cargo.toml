@@ -1,6 +1,6 @@
 [package]
 name = "vnc-rs"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 authors  = ["Jovi Hsu <jv.hsu@outlook.com>"]
 license = "MIT OR Apache-2.0"
@@ -27,10 +27,16 @@ flate2 = "^1.0"
 tracing = { version = "^0.1", features = ["log"] }
 
 # async
+async_io_stream = "0.3"
+futures = "0.3.25"
+tokio-util = { version = "0.7.7", features = ["compat"] }
+tokio-stream = "0.1.12"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "^1", features = ["full"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.33"
 tokio = { version = "^1", features = [
     "sync",
     "macros",

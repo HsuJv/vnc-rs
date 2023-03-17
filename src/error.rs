@@ -19,6 +19,8 @@ pub enum VncError {
     WrongServerMessage,
     #[error("Image data cannot be decoded correctly")]
     InvalidImageData,
+    #[error("The vnc client hasn't been started")]
+    ClientNotRunning,
     #[error("Vnc Error with message: {0}")]
     Custom(String),
 }
