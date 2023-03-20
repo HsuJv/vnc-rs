@@ -100,7 +100,7 @@ where
                             }
                         } else {
                             let msg = "Security type apart from Vnc Auth has not been implemented";
-                            return Err(VncError::Custom(msg.to_owned()).into());
+                            return Err(VncError::General(msg.to_owned()).into());
                         }
 
                         // get password
@@ -124,7 +124,7 @@ where
                                 let _ = connector.stream.read_u32().await?;
                                 let mut err_msg = String::new();
                                 connector.stream.read_to_string(&mut err_msg).await?;
-                                return Err(VncError::Custom(err_msg).into());
+                                return Err(VncError::General(err_msg).into());
                             }
                         }
                     }

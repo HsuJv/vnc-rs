@@ -22,5 +22,5 @@ pub enum VncError {
     #[error("The vnc client hasn't been started")]
     ClientNotRunning,
     #[error("Vnc Error with message: {0}")]
-    Custom(String),
+    General(String),
 }
