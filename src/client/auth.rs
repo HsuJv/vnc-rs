@@ -52,7 +52,7 @@ impl SecurityType {
                     let _ = reader.read_u32().await?;
                     let mut err_msg = String::new();
                     reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::Custom(err_msg).into());
+                    return Err(VncError::General(err_msg).into());
                 }
                 Ok(vec![security_type])
             }
@@ -70,7 +70,7 @@ impl SecurityType {
                     let _ = reader.read_u32().await?;
                     let mut err_msg = String::new();
                     reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::Custom(err_msg).into());
+                    return Err(VncError::General(err_msg).into());
                 }
                 let mut sec_types = vec![];
                 for _ in 0..num {
