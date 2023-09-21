@@ -19,24 +19,24 @@ path = "src/lib.rs"
 
 [dependencies]
 #error
-thiserror = "^1.0"
-anyhow = "^1.0"
-flate2 = "^1.0"
+thiserror = "^1"
+anyhow = "^1"
+flate2 = "^1"
 
 #log
 tracing = { version = "^0.1", features = ["log"] }
 
 # async
 async_io_stream = "0.3"
-futures = "0.3.25"
-tokio-util = { version = "0.7.7", features = ["compat"] }
-tokio-stream = "0.1.12"
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "^1", features = ["full"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4.33"
+wasm-bindgen-futures = "0.4"
 tokio = { version = "^1", features = [
     "sync",
     "macros",
