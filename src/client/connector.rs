@@ -171,7 +171,7 @@ where
 impl<S, F> VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String>>,
+    F: Future<Output = Result<String>> + Send + Sync + 'static,
 {
     /// To new a vnc client configuration with stream `S`
     ///
