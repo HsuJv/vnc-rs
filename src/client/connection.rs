@@ -136,7 +136,11 @@ impl VncInner {
         });
 
         // start the traffic process loop
-        spawn(async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx));
+        spawn(async move {
+            let _ =
+                async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx)
+                    .await;
+        });
 
         info!("VNC Client {name} starts");
         Ok(Self {
@@ -340,7 +344,10 @@ where
     Ok((name, (screen_width, screen_height)))
 }
 
-async fn send_client_encoding<S>(stream: &mut S, encodings: Vec<VncEncoding>) -> Result<(), VncError>
+async fn send_client_encoding<S>(
+    stream: &mut S,
+    encodings: Vec<VncEncoding>,
+) -> Result<(), VncError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -448,12 +455,7 @@ where
     let mut buffer = [0; 65535];
     // let mut nread = 0;
     let mut pending = 0;
-    loop {
-        match stop_ch.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => (),
-            _ => break,
-        }
-
+    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
         if pending > 0 {
             match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
                 Err(TrySendError::Full(_message)) => (),

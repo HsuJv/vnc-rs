@@ -189,7 +189,7 @@ impl ServerMsg {
                     String::from_utf8_lossy(&buffer_str).to_string(),
                 ))
             }
-            _ => Err(VncError::WrongServerMessage.into()),
+            _ => Err(VncError::WrongServerMessage),
         }
     }
 }

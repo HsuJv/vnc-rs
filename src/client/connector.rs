@@ -24,7 +24,9 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
-    pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self, VncError>> + Send + Sync + 'static>> {
+    pub fn try_start(
+        self,
+    ) -> Pin<Box<dyn Future<Output = Result<Self, VncError>> + Send + Sync + 'static>> {
         Box::pin(async move {
             match self {
                 VncState::Handshake(mut connector) => {
@@ -148,7 +150,7 @@ where
         if let VncState::Connected(client) = self {
             Ok(client)
         } else {
-            Err(VncError::ConnectError.into())
+            Err(VncError::ConnectError)
         }
     }
 }
@@ -177,12 +179,11 @@ where
     /// `S` should implement async I/O methods
     ///
     /// ```no_run
-    /// use vnc::{PixelFormat, VncConnector};
+    /// use vnc::{PixelFormat, VncConnector, VncError};
     /// use tokio::{self, net::TcpStream};
-    /// use anyhow::Result;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<()> {
+    /// async fn main() -> Result<(), VncError> {
     ///     let tcp = TcpStream::connect("127.0.0.1:5900").await?;
     ///     let vnc = VncConnector::new(tcp)
     ///         .set_auth_method(async move { Ok("password".to_string()) })
@@ -311,7 +312,7 @@ where
     ///
     pub fn build(self) -> Result<VncState<S, F>, VncError> {
         if self.encodings.is_empty() {
-            return Err(VncError::NoEncoding.into());
+            return Err(VncError::NoEncoding);
         }
         Ok(VncState::Handshake(self))
     }
