@@ -12,8 +12,8 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 
 pub enum VncState<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String>>,
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+    F: Future<Output = Result<String>> + Send + Sync + 'static,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
@@ -22,10 +22,10 @@ where
 
 impl<S, F> VncState<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String>> + 'static,
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+    F: Future<Output = Result<String>> + Send + Sync + 'static,
 {
-    pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self>>>> {
+    pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self>> + Send + Sync + 'static>> {
         Box::pin(async move {
             match self {
                 VncState::Handshake(mut connector) => {
@@ -158,7 +158,7 @@ where
 pub struct VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String>>,
+    F: Future<Output = Result<String>> + Send + Sync + 'static,
 {
     stream: S,
     auth_methond: Option<F>,
@@ -170,7 +170,7 @@ where
 
 impl<S, F> VncConnector<S, F>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     F: Future<Output = Result<String>> + Send + Sync + 'static,
 {
     /// To new a vnc client configuration with stream `S`
