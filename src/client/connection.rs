@@ -175,6 +175,17 @@ impl VncInner {
         }
     }
 
+    async fn recv_event(&mut self) -> Result<VncEvent, VncError> {
+        if self.closed {
+            Err(VncError::ClientNotRunning)
+        } else {
+            match self.output_ch.recv().await {
+                Some(e) => Ok(e),
+                None => Err(VncError::ClientNotRunning),
+            }
+        }
+    }
+
     async fn poll_event(&mut self) -> Result<Option<VncEvent>, VncError> {
         if self.closed {
             Err(VncError::ClientNotRunning)
@@ -190,7 +201,7 @@ impl VncInner {
 
     /// Stop the VNC engine and release resources
     ///
-    async fn close(&mut self) -> Result<(), VncError> {
+    fn close(&mut self) -> Result<(), VncError> {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
@@ -241,6 +252,13 @@ impl VncClient {
         self.inner.lock().await.input(event).await
     }
 
+    /// Receive a `VncEvent` from the engine
+    /// This function will block until a `VncEvent` is received
+    ///
+    pub async fn recv_event(&self) -> Result<VncEvent, VncError> {
+        self.inner.lock().await.recv_event().await
+    }
+
     /// polling `VncEvent` from the engine and give it to the client
     ///
     pub async fn poll_event(&self) -> Result<Option<VncEvent>, VncError> {
@@ -250,7 +268,7 @@ impl VncClient {
     /// Stop the VNC engine and release resources
     ///
     pub async fn close(&self) -> Result<(), VncError> {
-        self.inner.lock().await.close().await
+        self.inner.lock().await.close()
     }
 }
 
