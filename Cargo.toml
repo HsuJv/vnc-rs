@@ -20,7 +20,6 @@ path = "src/lib.rs"
 [dependencies]
 #error
 thiserror = "^1"
-anyhow = "^1"
 flate2 = "^1"
 
 #log

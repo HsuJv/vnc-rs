@@ -1,5 +1,4 @@
 use crate::{PixelFormat, Rect, VncEncoding, VncError};
-use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug)]
@@ -13,7 +12,7 @@ pub(super) enum ClientMsg {
 }
 
 impl ClientMsg {
-    pub(super) async fn write<S>(self, writer: &mut S) -> Result<()>
+    pub(super) async fn write<S>(self, writer: &mut S) -> Result<(), VncError>
     where
         S: AsyncWrite + Unpin,
     {
@@ -130,7 +129,7 @@ pub(super) enum ServerMsg {
 }
 
 impl ServerMsg {
-    pub(super) async fn read<S>(reader: &mut S) -> Result<Self>
+    pub(super) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {

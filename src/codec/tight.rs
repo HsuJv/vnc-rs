@@ -1,5 +1,4 @@
 use crate::{PixelFormat, Rect, VncError, VncEvent};
-use anyhow::{Ok, Result};
 use std::future::Future;
 use std::io::Read;
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -37,11 +36,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let pixel_mask = (format.red_max as u32) << format.red_shift
             | (format.green_max as u32) << format.green_shift
@@ -77,7 +76,7 @@ impl Decoder {
             10 => {
                 // png Rect
                 error!("PNG received in standard Tight rect");
-                Err(VncError::InvalidImageData.into())
+                Err(VncError::InvalidImageData)
             }
             x if x & 0x8 == 0 => {
                 // basic Rect
@@ -85,12 +84,12 @@ impl Decoder {
             }
             _ => {
                 error!("Illegal tight compression received ({})", self.ctrl);
-                Err(VncError::InvalidImageData.into())
+                Err(VncError::InvalidImageData)
             }
         }
     }
 
-    async fn read_data<S>(&mut self, input: &mut S) -> Result<Vec<u8>>
+    async fn read_data<S>(&mut self, input: &mut S) -> Result<Vec<u8>, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -120,11 +119,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let mut color = [0; 3];
         input.read_exact(&mut color).await?;
@@ -148,11 +147,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let data = self.read_data(input).await?;
         output_func(VncEvent::JpegImage(*rect, data)).await?;
@@ -165,11 +164,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         self.filter = {
             if self.ctrl & 0x4 == 4 {
@@ -198,7 +197,7 @@ impl Decoder {
             }
             _ => {
                 error!("Illegal tight filter received (filter: {})", self.filter);
-                Err(VncError::InvalidImageData.into())
+                Err(VncError::InvalidImageData)
             }
         }
     }
@@ -210,11 +209,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let uncompressed_size = rect.width as usize * rect.height as usize * 3;
         if uncompressed_size == 0 {
@@ -243,11 +242,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let num_colors = input.read_u8().await? as usize + 1;
         let palette_size = num_colors * 3;
@@ -282,10 +281,10 @@ impl Decoder {
         rect: &Rect,
         format: &PixelFormat,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         // Convert indexed (palette based) image data to RGB
         let total = rect.width as usize * rect.height as usize;
@@ -316,10 +315,10 @@ impl Decoder {
         rect: &Rect,
         format: &PixelFormat,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         // Convert indexed (palette based) image data to RGB
         let total = rect.width as usize * rect.height as usize;
@@ -346,11 +345,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let uncompressed_size = rect.width as usize * rect.height as usize * 3;
         if uncompressed_size == 0 {
@@ -414,7 +413,7 @@ impl Decoder {
         stream: u8,
         input: &mut S,
         uncompressed_size: usize,
-    ) -> Result<Vec<u8>>
+    ) -> Result<Vec<u8>, VncError>
     where
         S: AsyncRead + Unpin,
     {

@@ -1,5 +1,4 @@
-use crate::{PixelFormat, Rect, VncEvent};
-use anyhow::Result;
+use crate::{PixelFormat, Rect, VncError, VncEvent};
 use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -18,11 +17,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         // +----------------------------+--------------+-------------+
         // | No. of bytes               | Type [Value] | Description |

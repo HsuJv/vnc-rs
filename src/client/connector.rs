@@ -2,7 +2,6 @@ use super::{
     auth::{AuthHelper, AuthResult, SecurityType},
     connection::VncClient,
 };
-use anyhow::{Ok, Result};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
@@ -13,7 +12,7 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 pub enum VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String>> + Send + Sync + 'static,
+    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
@@ -23,9 +22,9 @@ where
 impl<S, F> VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String>> + Send + Sync + 'static,
+    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
-    pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self>> + Send + Sync + 'static>> {
+    pub fn try_start(self) -> Pin<Box<dyn Future<Output = Result<Self, VncError>> + Send + Sync + 'static>> {
         Box::pin(async move {
             match self {
                 VncState::Handshake(mut connector) => {
@@ -100,12 +99,12 @@ where
                             }
                         } else {
                             let msg = "Security type apart from Vnc Auth has not been implemented";
-                            return Err(VncError::General(msg.to_owned()).into());
+                            return Err(VncError::General(msg.to_owned()));
                         }
 
                         // get password
                         if connector.auth_methond.is_none() {
-                            return Err(VncError::NoPassword.into());
+                            return Err(VncError::NoPassword);
                         }
 
                         let credential = (connector.auth_methond.take().unwrap()).await?;
@@ -119,12 +118,12 @@ where
                                 // In VNC Authentication (Section 7.2.2), if the authentication fails,
                                 // the server sends the SecurityResult message, but does not send an
                                 // error message before closing the connection.
-                                return Err(VncError::WrongPassword.into());
+                                return Err(VncError::WrongPassword);
                             } else {
                                 let _ = connector.stream.read_u32().await?;
                                 let mut err_msg = String::new();
                                 connector.stream.read_to_string(&mut err_msg).await?;
-                                return Err(VncError::General(err_msg).into());
+                                return Err(VncError::General(err_msg));
                             }
                         }
                     }
@@ -145,7 +144,7 @@ where
         })
     }
 
-    pub fn finish(self) -> Result<VncClient> {
+    pub fn finish(self) -> Result<VncClient, VncError> {
         if let VncState::Connected(client) = self {
             Ok(client)
         } else {
@@ -158,7 +157,7 @@ where
 pub struct VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String>> + Send + Sync + 'static,
+    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
     stream: S,
     auth_methond: Option<F>,
@@ -171,7 +170,7 @@ where
 impl<S, F> VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String>> + Send + Sync + 'static,
+    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
     /// To new a vnc client configuration with stream `S`
     ///
@@ -310,7 +309,7 @@ where
 
     /// Complete the client configuration
     ///
-    pub fn build(self) -> Result<VncState<S, F>> {
+    pub fn build(self) -> Result<VncState<S, F>, VncError> {
         if self.encodings.is_empty() {
             return Err(VncError::NoEncoding.into());
         }
