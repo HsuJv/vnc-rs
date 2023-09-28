@@ -1,5 +1,4 @@
 use crate::VncError;
-use anyhow::{Context, Ok, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// All supported vnc encodings
@@ -67,7 +66,7 @@ impl From<VncVersion> for &[u8; 12] {
 }
 
 impl VncVersion {
-    pub(crate) async fn read<S>(reader: &mut S) -> Result<Self>
+    pub(crate) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -76,7 +75,7 @@ impl VncVersion {
         Ok(buffer.into())
     }
 
-    pub(crate) async fn write<S>(self, writer: &mut S) -> Result<()>
+    pub(crate) async fn write<S>(self, writer: &mut S) -> Result<(), VncError>
     where
         S: AsyncWrite + Unpin,
     {
@@ -166,11 +165,12 @@ impl From<PixelFormat> for Vec<u8> {
 }
 
 impl TryFrom<[u8; 16]> for PixelFormat {
-    type Error = anyhow::Error;
+    type Error = VncError;
+
     fn try_from(pf: [u8; 16]) -> Result<Self, Self::Error> {
         let bits_per_pixel = pf[0];
         if bits_per_pixel != 8 && bits_per_pixel != 16 && bits_per_pixel != 32 {
-            return Err(VncError::WrongPixelFormat.into());
+            return Err(VncError::WrongPixelFormat);
         }
         let depth = pf[1];
         let big_endian_flag = pf[2];
@@ -241,14 +241,12 @@ impl PixelFormat {
         }
     }
 
-    pub(crate) async fn read<S>(reader: &mut S) -> Result<Self>
+    pub(crate) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {
         let mut pixel_buffer = [0_u8; 16];
         reader.read_exact(&mut pixel_buffer).await?;
-        pixel_buffer
-            .try_into()
-            .with_context(|| "Invalid pixel format from the reader")
+        pixel_buffer.try_into()
     }
 }

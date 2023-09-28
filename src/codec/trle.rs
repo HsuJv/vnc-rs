@@ -1,12 +1,11 @@
 use crate::{PixelFormat, Rect, VncError, VncEvent};
-use anyhow::Result;
 use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
 use super::uninit_vec;
 
-async fn read_run_length<S>(reader: &mut S) -> Result<usize>
+async fn read_run_length<S>(reader: &mut S) -> Result<usize, VncError>
 where
     S: AsyncRead + Unpin,
 {
@@ -28,7 +27,7 @@ async fn copy_true_color<S>(
     pad: bool,
     compressed_bpp: usize,
     bpp: usize,
-) -> Result<()>
+) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
 {
@@ -58,11 +57,11 @@ impl Decoder {
         rect: &Rect,
         input: &mut S,
         output_func: &F,
-    ) -> Result<()>
+    ) -> Result<(), VncError>
     where
         S: AsyncRead + Unpin,
         F: Fn(VncEvent) -> Fut,
-        Fut: Future<Output = Result<()>>,
+        Fut: Future<Output = Result<(), VncError>>,
     {
         let data_len = input.read_u32().await? as usize;
         let mut zlib_data = uninit_vec(data_len);
@@ -199,7 +198,7 @@ impl Decoder {
                     }
                     (x, y) => {
                         error!("TLRE subencoding error {:?}", (x, y));
-                        return Err(VncError::InvalidImageData.into());
+                        return Err(VncError::InvalidImageData);
                     }
                 }
                 output_func(VncEvent::RawImage(

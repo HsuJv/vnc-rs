@@ -20,7 +20,6 @@ path = "src/lib.rs"
 [dependencies]
 #error
 thiserror = "^1"
-anyhow = "^1"
 flate2 = "^1"
 
 #log
@@ -46,8 +45,9 @@ tokio = { version = "^1", features = [
     ]}
 
 [dev-dependencies]
+anyhow = "^1"
 tracing-subscriber = { version = "^0.3" }
-minifb = "0.23.0"
+minifb = "0.25.0"
 
 
 [profile.release]

@@ -1,4 +1,3 @@
-use anyhow::{Ok, Result};
 use futures::TryStreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -51,7 +50,7 @@ impl From<[u8; 12]> for ImageRect {
 }
 
 impl ImageRect {
-    async fn read<S>(reader: &mut S) -> Result<Self>
+    async fn read<S>(reader: &mut S) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -79,7 +78,7 @@ impl VncInner {
         shared: bool,
         mut pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
-    ) -> Result<Self>
+    ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -155,9 +154,9 @@ impl VncInner {
         })
     }
 
-    async fn input(&mut self, event: X11Event) -> Result<()> {
+    async fn input(&mut self, event: X11Event) -> Result<(), VncError> {
         if self.closed {
-            Err(VncError::ClientNotRunning.into())
+            Err(VncError::ClientNotRunning)
         } else {
             let msg = match event {
                 X11Event::Refresh => ClientMsg::FramebufferUpdateRequest(
@@ -180,14 +179,23 @@ impl VncInner {
         }
     }
 
-    async fn poll_event(&mut self) -> Result<Option<VncEvent>> {
-        use std::result::Result::Ok;
-
+    async fn recv_event(&mut self) -> Result<VncEvent, VncError> {
         if self.closed {
-            Err(VncError::ClientNotRunning.into())
+            Err(VncError::ClientNotRunning)
+        } else {
+            match self.output_ch.recv().await {
+                Some(e) => Ok(e),
+                None => Err(VncError::ClientNotRunning),
+            }
+        }
+    }
+
+    async fn poll_event(&mut self) -> Result<Option<VncEvent>, VncError> {
+        if self.closed {
+            Err(VncError::ClientNotRunning)
         } else {
             match self.output_ch.try_recv() {
-                Err(TryRecvError::Disconnected) => Err(VncError::ClientNotRunning.into()),
+                Err(TryRecvError::Disconnected) => Err(VncError::ClientNotRunning),
                 Err(TryRecvError::Empty) => Ok(None),
                 Ok(e) => Ok(Some(e)),
             }
@@ -197,9 +205,9 @@ impl VncInner {
 
     /// Stop the VNC engine and release resources
     ///
-    async fn close(&mut self) -> Result<()> {
+    fn close(&mut self) -> Result<(), VncError> {
         if self.closed {
-            Err(VncError::ClientNotRunning.into())
+            Err(VncError::ClientNotRunning)
         } else {
             if self.net_conn_stop.is_some() {
                 let net_conn_stop = self.net_conn_stop.take().unwrap();
@@ -231,7 +239,7 @@ impl VncClient {
         shared: bool,
         pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
-    ) -> Result<Self>
+    ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -244,20 +252,27 @@ impl VncClient {
 
     /// Input a `X11Event` from the frontend
     ///
-    pub async fn input(&self, event: X11Event) -> Result<()> {
+    pub async fn input(&self, event: X11Event) -> Result<(), VncError> {
         self.inner.lock().await.input(event).await
+    }
+
+    /// Receive a `VncEvent` from the engine
+    /// This function will block until a `VncEvent` is received
+    ///
+    pub async fn recv_event(&self) -> Result<VncEvent, VncError> {
+        self.inner.lock().await.recv_event().await
     }
 
     /// polling `VncEvent` from the engine and give it to the client
     ///
-    pub async fn poll_event(&self) -> Result<Option<VncEvent>> {
+    pub async fn poll_event(&self) -> Result<Option<VncEvent>, VncError> {
         self.inner.lock().await.poll_event().await
     }
 
     /// Stop the VNC engine and release resources
     ///
-    pub async fn close(&self) -> Result<()> {
-        self.inner.lock().await.close().await
+    pub async fn close(&self) -> Result<(), VncError> {
+        self.inner.lock().await.close()
     }
 }
 
@@ -269,7 +284,7 @@ impl Clone for VncClient {
     }
 }
 
-async fn send_client_init<S>(stream: &mut S, shared: bool) -> Result<()>
+async fn send_client_init<S>(stream: &mut S, shared: bool) -> Result<(), VncError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -282,11 +297,11 @@ async fn read_server_init<S, F, Fut>(
     stream: &mut S,
     pf: &mut Option<PixelFormat>,
     output_func: &F,
-) -> Result<(String, (u16, u16))>
+) -> Result<(String, (u16, u16)), VncError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Fn(VncEvent) -> Fut,
-    Fut: Future<Output = Result<()>>,
+    Fut: Future<Output = Result<(), VncError>>,
 {
     // +--------------+--------------+------------------------------+
     // | No. of bytes | Type [Value] | Description                  |
@@ -318,7 +333,7 @@ where
     let name_len = stream.read_u32().await?;
     let mut name_buf = vec![0_u8; name_len as usize];
     stream.read_exact(&mut name_buf).await?;
-    let name = String::from_utf8(name_buf)?;
+    let name = String::from_utf8_lossy(&name_buf).into_owned();
 
     if send_our_pf {
         trace!("Send customized pixel format {:#?}", pf);
@@ -329,7 +344,10 @@ where
     Ok((name, (screen_width, screen_height)))
 }
 
-async fn send_client_encoding<S>(stream: &mut S, encodings: Vec<VncEncoding>) -> Result<()>
+async fn send_client_encoding<S>(
+    stream: &mut S,
+    encodings: Vec<VncEncoding>,
+) -> Result<(), VncError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -342,11 +360,11 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     pf: &PixelFormat,
     output_func: &F,
     mut stop_ch: oneshot::Receiver<()>,
-) -> Result<()>
+) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
     F: Fn(VncEvent) -> Fut,
-    Fut: Future<Output = Result<()>>,
+    Fut: Future<Output = Result<(), VncError>>,
 {
     trace!("Decoding thread starts");
     let mut raw_decoder = codec::RawDecoder::new();
@@ -429,7 +447,7 @@ async fn async_connection_process_loop<S>(
     mut input_ch: Receiver<ClientMsg>,
     conn_ch: Sender<std::io::Result<Vec<u8>>>,
     mut stop_ch: oneshot::Receiver<()>,
-) -> Result<()>
+) -> Result<(), VncError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -437,14 +455,7 @@ where
     let mut buffer = [0; 65535];
     // let mut nread = 0;
     let mut pending = 0;
-    loop {
-        use std::result::Result::Ok;
-
-        match stop_ch.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => (),
-            _ => break,
-        }
-
+    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
         if pending > 0 {
             match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
                 Err(TrySendError::Full(_message)) => (),

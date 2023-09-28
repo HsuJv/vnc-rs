@@ -1,13 +1,13 @@
 use thiserror::Error;
 
 #[non_exhaustive]
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error)]
 pub enum VncError {
     #[error("Auth is required but no password provided")]
     NoPassword,
-    #[error("No vnc encoding selected")]
+    #[error("No VNC encoding selected")]
     NoEncoding,
-    #[error("Unknow vnc security type: {0}")]
+    #[error("Unknow VNC security type: {0}")]
     InvalidSecurityTyep(u8),
     #[error("Wrong password")]
     WrongPassword,
@@ -19,8 +19,16 @@ pub enum VncError {
     WrongServerMessage,
     #[error("Image data cannot be decoded correctly")]
     InvalidImageData,
-    #[error("The vnc client hasn't been started")]
+    #[error("The VNC client hasn't been started")]
     ClientNotRunning,
-    #[error("Vnc Error with message: {0}")]
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("VNC Error with message: {0}")]
     General(String),
+}
+
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for VncError {
+    fn from(_value: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        VncError::General("Channel closed".to_string())
+    }
 }

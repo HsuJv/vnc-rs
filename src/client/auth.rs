@@ -1,6 +1,5 @@
 use super::security;
 use crate::{VncError, VncVersion};
-use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[allow(dead_code)]
@@ -40,7 +39,7 @@ impl From<SecurityType> for u8 {
 }
 
 impl SecurityType {
-    pub(super) async fn read<S>(reader: &mut S, version: &VncVersion) -> Result<Vec<Self>>
+    pub(super) async fn read<S>(reader: &mut S, version: &VncVersion) -> Result<Vec<Self>, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -52,7 +51,7 @@ impl SecurityType {
                     let _ = reader.read_u32().await?;
                     let mut err_msg = String::new();
                     reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg).into());
+                    return Err(VncError::General(err_msg));
                 }
                 Ok(vec![security_type])
             }
@@ -70,7 +69,7 @@ impl SecurityType {
                     let _ = reader.read_u32().await?;
                     let mut err_msg = String::new();
                     reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg).into());
+                    return Err(VncError::General(err_msg));
                 }
                 let mut sec_types = vec![];
                 for _ in 0..num {
@@ -82,7 +81,7 @@ impl SecurityType {
         }
     }
 
-    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<()>
+    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<(), VncError>
     where
         S: AsyncWrite + Unpin,
     {
@@ -116,7 +115,7 @@ pub(super) struct AuthHelper {
 }
 
 impl AuthHelper {
-    pub(super) async fn read<S>(reader: &mut S, credential: &str) -> Result<Self>
+    pub(super) async fn read<S>(reader: &mut S, credential: &str) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -141,7 +140,7 @@ impl AuthHelper {
         Ok(Self { challenge, key })
     }
 
-    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<()>
+    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<(), VncError>
     where
         S: AsyncWrite + Unpin,
     {
@@ -150,7 +149,7 @@ impl AuthHelper {
         Ok(())
     }
 
-    pub(super) async fn finish<S>(self, reader: &mut S) -> Result<AuthResult>
+    pub(super) async fn finish<S>(self, reader: &mut S) -> Result<AuthResult, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
