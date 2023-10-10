@@ -19,9 +19,9 @@ pub enum VncError {
     WrongServerMessage,
     #[error("Image data cannot be decoded correctly")]
     InvalidImageData,
-    #[error("The VNC client hasn't been started")]
+    #[error("The VNC client isn't started. Or it is already closed")]
     ClientNotRunning,
-    #[error("I/O error: {0}")]
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("VNC Error with message: {0}")]
     General(String),

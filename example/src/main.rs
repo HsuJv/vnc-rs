@@ -121,7 +121,7 @@ impl CanvasUtils {
             VncEvent::Text(string) => {
                 tracing::info!("Got clipboard message {}", string);
             }
-            _ => unreachable!(),
+            _ => tracing::error!("{:?}", event),
         }
         Ok(())
     }
@@ -131,11 +131,13 @@ impl CanvasUtils {
 async fn main() -> Result<()> {
     // Create tracing subscriber
     #[cfg(debug_assertions)]
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+    let subscriber = tracing_subscriber::fmt()
+        .pretty()
         .with_max_level(Level::TRACE)
         .finish();
     #[cfg(not(debug_assertions))]
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+    let subscriber = tracing_subscriber::fmt()
+        .pretty()
         .with_max_level(Level::INFO)
         .finish();
 

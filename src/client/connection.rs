@@ -14,7 +14,7 @@ use tokio::{
     },
 };
 use tokio_util::compat::*;
-use tracing::{info, trace};
+use tracing::*;
 
 use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
 const CHANNEL_SIZE: usize = 4096;
@@ -117,6 +117,7 @@ impl VncInner {
 
         // start the decoding thread
         spawn(async move {
+            trace!("Decoding thread starts");
             let mut conn_ch_rx = {
                 let conn_ch_rx = ReceiverStream::new(conn_ch_rx).into_async_read();
                 FuturesAsyncReadCompatExt::compat(conn_ch_rx)
@@ -131,15 +132,30 @@ impl VncInner {
             if let Err(e) =
                 asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
             {
-                let _ = output_func(VncEvent::Error(e.to_string())).await;
+                if let VncError::IoError(e) = e {
+                    if let std::io::ErrorKind::UnexpectedEof = e.kind() {
+                        // this should be a normal case when the network connection disconnects
+                        // and we just send an EOF over the inner bridge between the process thread and the decode thread
+                        // do nothing here
+                    } else {
+                        error!("Error occurs during the decoding {:?}", e);
+                        let _ = output_func(VncEvent::Error(e.to_string())).await;
+                    }
+                } else {
+                    error!("Error occurs during the decoding {:?}", e);
+                    let _ = output_func(VncEvent::Error(e.to_string())).await;
+                }
             }
+            trace!("Decoding thread stops");
         });
 
-        // start the traffic process loop
+        // start the traffic process thread
         spawn(async move {
+            trace!("Net Connection thread starts");
             let _ =
                 async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx)
                     .await;
+            trace!("Net Connection thread stops");
         });
 
         info!("VNC Client {name} starts");
@@ -185,7 +201,10 @@ impl VncInner {
         } else {
             match self.output_ch.recv().await {
                 Some(e) => Ok(e),
-                None => Err(VncError::ClientNotRunning),
+                None => {
+                    self.closed = true;
+                    Err(VncError::ClientNotRunning)
+                }
             }
         }
     }
@@ -195,7 +214,10 @@ impl VncInner {
             Err(VncError::ClientNotRunning)
         } else {
             match self.output_ch.try_recv() {
-                Err(TryRecvError::Disconnected) => Err(VncError::ClientNotRunning),
+                Err(TryRecvError::Disconnected) => {
+                    self.closed = true;
+                    Err(VncError::ClientNotRunning)
+                }
                 Err(TryRecvError::Empty) => Ok(None),
                 Ok(e) => Ok(Some(e)),
             }
@@ -206,20 +228,16 @@ impl VncInner {
     /// Stop the VNC engine and release resources
     ///
     fn close(&mut self) -> Result<(), VncError> {
-        if self.closed {
-            Err(VncError::ClientNotRunning)
-        } else {
-            if self.net_conn_stop.is_some() {
-                let net_conn_stop = self.net_conn_stop.take().unwrap();
-                let _ = net_conn_stop.send(());
-            }
-            if self.decoding_stop.is_some() {
-                let decoding_stop = self.decoding_stop.take().unwrap();
-                let _ = decoding_stop.send(());
-            }
-            self.closed = true;
-            Ok(())
+        if self.net_conn_stop.is_some() {
+            let net_conn_stop: oneshot::Sender<()> = self.net_conn_stop.take().unwrap();
+            let _ = net_conn_stop.send(());
         }
+        if self.decoding_stop.is_some() {
+            let decoding_stop = self.decoding_stop.take().unwrap();
+            let _ = decoding_stop.send(());
+        }
+        self.closed = true;
+        Ok(())
     }
 }
 
@@ -367,13 +385,14 @@ where
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
-    trace!("Decoding thread starts");
     let mut raw_decoder = codec::RawDecoder::new();
     let mut zrle_decoder = codec::ZrleDecoder::new();
     let mut tight_decoder = codec::TightDecoder::new();
     let mut trle_decoder = codec::TrleDecoder::new();
     let mut cursor = codec::CursorDecoder::new();
-    loop {
+
+    // main decoding loop
+    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
         let server_msg = ServerMsg::read(stream).await?;
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
@@ -434,12 +453,7 @@ where
                 output_func(VncEvent::Text(text)).await?;
             }
         }
-        match stop_ch.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => continue,
-            _ => break,
-        }
     }
-    trace!("Decoding thread stops");
     Ok(())
 }
 
@@ -452,10 +466,10 @@ async fn async_connection_process_loop<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    trace!("Net Connection thread starts");
     let mut buffer = [0; 65535];
-    // let mut nread = 0;
     let mut pending = 0;
+
+    // main traffic loop
     while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
         if pending > 0 {
             match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
@@ -466,12 +480,26 @@ where
         }
 
         tokio::select! {
-            Ok(nread) = stream.read(&mut buffer), if pending == 0 => {
-                if nread > 0 {
-                    match conn_ch.try_send(Ok(buffer[0..nread].to_owned())) {
-                        Err(TrySendError::Full(_message)) => pending = nread,
-                        Err(TrySendError::Closed(_message)) => break,
-                        Ok(()) => ()
+            result = stream.read(&mut buffer), if pending == 0 => {
+                match result {
+                    Ok(nread) => {
+                        if nread > 0 {
+                            match conn_ch.try_send(Ok(buffer[0..nread].to_owned())) {
+                                Err(TrySendError::Full(_message)) => pending = nread,
+                                Err(TrySendError::Closed(_message)) => break,
+                                Ok(()) => ()
+                            }
+                        } else {
+                            // According to the tokio's Doc
+                            // https://docs.rs/tokio/latest/tokio/io/trait.AsyncRead.html
+                            // if nread == 0, then EOF is reached
+                            trace!("Net Connection EOF detected");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("{}", e.to_string());
+                        break;
                     }
                 }
             }
@@ -480,6 +508,11 @@ where
             }
         }
     }
-    trace!("Net Connection thread stops");
+
+    // notify the decoding thread
+    let _ = conn_ch
+        .send(Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)))
+        .await;
+
     Ok(())
 }
