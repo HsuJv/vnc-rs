@@ -226,6 +226,7 @@ impl VncInner {
 impl Drop for VncInner {
     fn drop(&mut self) {
         info!("VNC Client {} stops", self.name);
+        let _ = self.close();
     }
 }
 
