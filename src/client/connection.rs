@@ -470,7 +470,7 @@ where
     let mut pending = 0;
 
     // main traffic loop
-    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
+    loop {
         if pending > 0 {
             match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
                 Err(TrySendError::Full(_message)) => (),
@@ -480,6 +480,7 @@ where
         }
 
         tokio::select! {
+            _ = &mut stop_ch => break,
             result = stream.read(&mut buffer), if pending == 0 => {
                 match result {
                     Ok(nread) => {
