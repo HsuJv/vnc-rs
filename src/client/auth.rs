@@ -25,7 +25,7 @@ impl TryFrom<u8> for SecurityType {
     fn try_from(num: u8) -> Result<Self, Self::Error> {
         match num {
             0 | 1 | 2 | 5 | 6 | 16 | 17 | 18 | 19 | 20 | 21 | 22 => {
-                Ok(unsafe { std::mem::transmute(num) })
+                Ok(unsafe { std::mem::transmute::<u8, SecurityType>(num) })
             }
             invalid => Err(VncError::InvalidSecurityTyep(invalid)),
         }
