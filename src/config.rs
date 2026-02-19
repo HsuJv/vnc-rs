@@ -20,7 +20,20 @@ pub enum VncEncoding {
 
 impl From<u32> for VncEncoding {
     fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+        // Safe match instead of transmute — unknown encoding IDs fall back to Raw
+        // instead of causing UB (the original transmute is unsound for any value
+        // not matching a valid discriminant).
+        match num as i32 {
+            0 => VncEncoding::Raw,
+            1 => VncEncoding::CopyRect,
+            7 => VncEncoding::Tight,
+            15 => VncEncoding::Trle,
+            16 => VncEncoding::Zrle,
+            -239 => VncEncoding::CursorPseudo,
+            -223 => VncEncoding::DesktopSizePseudo,
+            -224 => VncEncoding::LastRectPseudo,
+            _ => VncEncoding::Raw,
+        }
     }
 }
 
