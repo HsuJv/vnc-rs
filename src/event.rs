@@ -131,9 +131,13 @@ impl From<(u16, u16, u8)> for ClientMouseEvent {
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum X11Event {
-    /// Require a frame update
+    /// Require an incremental frame update
     ///
     Refresh,
+    /// Require a full (non-incremental) frame update.
+    /// Forces the server to send the entire framebuffer, useful after
+    /// CursorPseudo is negotiated to clear cursor ghosts from the framebuffer.
+    FullRefresh,
     /// Key down/up
     ///
     KeyEvent(ClientKeyEvent),

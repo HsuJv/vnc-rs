@@ -184,6 +184,15 @@ impl VncInner {
                     },
                     1,
                 ),
+                X11Event::FullRefresh => ClientMsg::FramebufferUpdateRequest(
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: self.screen.0,
+                        height: self.screen.1,
+                    },
+                    0, // non-incremental: server sends entire framebuffer
+                ),
                 X11Event::KeyEvent(key) => ClientMsg::KeyEvent(key.keycode, key.down),
                 X11Event::PointerEvent(mouse) => {
                     ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons)
