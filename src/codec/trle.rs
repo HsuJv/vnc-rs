@@ -68,9 +68,7 @@ impl Decoder {
         input.read_exact(&mut zlib_data).await?;
 
         let bpp = format.bits_per_pixel as usize / 8;
-        let pixel_mask = (format.red_max as u32) << format.red_shift
-            | (format.green_max as u32) << format.green_shift
-            | (format.blue_max as u32) << format.blue_shift;
+        let pixel_mask = ((format.red_max as u32) << format.red_shift) | ((format.green_max as u32) << format.green_shift) | ((format.blue_max as u32) << format.blue_shift);
 
         let (compressed_bpp, alpha_at_first) =
             if format.bits_per_pixel == 32 && format.true_color_flag > 0 && format.depth <= 24 {

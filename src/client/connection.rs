@@ -35,14 +35,12 @@ impl From<[u8; 12]> for ImageRect {
     fn from(buf: [u8; 12]) -> Self {
         Self {
             rect: Rect {
-                x: (buf[0] as u16) << 8 | buf[1] as u16,
-                y: (buf[2] as u16) << 8 | buf[3] as u16,
-                width: (buf[4] as u16) << 8 | buf[5] as u16,
-                height: (buf[6] as u16) << 8 | buf[7] as u16,
+                x: ((buf[0] as u16) << 8) | buf[1] as u16,
+                y: ((buf[2] as u16) << 8) | buf[3] as u16,
+                width: ((buf[4] as u16) << 8) | buf[5] as u16,
+                height: ((buf[6] as u16) << 8) | buf[7] as u16,
             },
-            encoding: ((buf[8] as u32) << 24
-                | (buf[9] as u32) << 16
-                | (buf[10] as u32) << 8
+            encoding: (((buf[8] as u32) << 24) | ((buf[9] as u32) << 16) | ((buf[10] as u32) << 8)
                 | (buf[11] as u32))
                 .into(),
         }

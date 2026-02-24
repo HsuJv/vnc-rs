@@ -56,7 +56,7 @@ impl<'a> ZlibReader<'a> {
     }
 }
 
-impl<'a> Read for ZlibReader<'a> {
+impl Read for ZlibReader<'_> {
     fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
         let in_before = self.decompressor.total_in();
         let out_before = self.decompressor.total_out();

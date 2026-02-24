@@ -244,7 +244,7 @@ fn s(box_id: usize, block: u64) -> u64 {
             [2, 1, 14, 7, 4, 10, 8, 13, 15, 12, 9, 0, 3, 5, 6, 11],
         ],
     ];
-    let i = ((block & 0x20) >> 4 | (block & 1)) as usize;
+    let i = (((block & 0x20) >> 4) | (block & 1)) as usize;
     let j = ((block & 0x1E) >> 1) as usize;
     tables[box_id][i][j]
 }

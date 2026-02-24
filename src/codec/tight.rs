@@ -42,9 +42,7 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let pixel_mask = (format.red_max as u32) << format.red_shift
-            | (format.green_max as u32) << format.green_shift
-            | (format.blue_max as u32) << format.blue_shift;
+        let pixel_mask = ((format.red_max as u32) << format.red_shift) | ((format.green_max as u32) << format.green_shift) | ((format.blue_max as u32) << format.blue_shift);
 
         self.alpha_shift = match pixel_mask {
             0xff_ff_ff_00 => 0,
@@ -255,7 +253,7 @@ impl Decoder {
         input.read_exact(&mut self.palette).await?;
 
         let bpp = if num_colors <= 2 { 1 } else { 8 };
-        let row_size = (rect.width as usize * bpp + 7) / 8;
+        let row_size = (rect.width as usize * bpp).div_ceil(8);
         let uncompressed_size = rect.height as usize * row_size;
 
         if uncompressed_size == 0 {
