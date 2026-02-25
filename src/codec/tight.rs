@@ -42,7 +42,9 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let pixel_mask = ((format.red_max as u32) << format.red_shift) | ((format.green_max as u32) << format.green_shift) | ((format.blue_max as u32) << format.blue_shift);
+        let pixel_mask = ((format.red_max as u32) << format.red_shift)
+            | ((format.green_max as u32) << format.green_shift)
+            | ((format.blue_max as u32) << format.blue_shift);
 
         self.alpha_shift = match pixel_mask {
             0xff_ff_ff_00 => 0,

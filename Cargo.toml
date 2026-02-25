@@ -1,8 +1,8 @@
 [package]
 name = "vnc-rs"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
-authors  = ["Jovi Hsu <jv.hsu@outlook.com>", "Petr Beneš <petr.benes@gendigital.com>"]
+authors  = ["Jovi Hsu <jv.hsu@outlook.com>", "Petr Beneš <petr.benes@gendigital.com>", "Djamel TORCHE <djamel.torche@gmail.com>"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/HsuJv/vnc-rs"

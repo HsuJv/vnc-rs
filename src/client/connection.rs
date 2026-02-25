@@ -40,7 +40,9 @@ impl From<[u8; 12]> for ImageRect {
                 width: ((buf[4] as u16) << 8) | buf[5] as u16,
                 height: ((buf[6] as u16) << 8) | buf[7] as u16,
             },
-            encoding: (((buf[8] as u32) << 24) | ((buf[9] as u32) << 16) | ((buf[10] as u32) << 8)
+            encoding: (((buf[8] as u32) << 24)
+                | ((buf[9] as u32) << 16)
+                | ((buf[10] as u32) << 8)
                 | (buf[11] as u32))
                 .into(),
         }
@@ -69,7 +71,7 @@ struct VncInner {
 }
 
 /// The instance of a connected vnc client
-
+///
 impl VncInner {
     async fn new<S>(
         mut stream: S,

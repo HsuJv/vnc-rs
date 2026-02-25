@@ -40,7 +40,9 @@ impl Decoder {
         let mut image = uninit_vec(pixels_length);
         let mut pix_idx = 0;
 
-        let pixel_mask = ((format.red_max as u32) << format.red_shift) | ((format.green_max as u32) << format.green_shift) | ((format.blue_max as u32) << format.blue_shift);
+        let pixel_mask = ((format.red_max as u32) << format.red_shift)
+            | ((format.green_max as u32) << format.green_shift)
+            | ((format.blue_max as u32) << format.blue_shift);
 
         let mut alpha_idx = match pixel_mask {
             0xff_ff_ff_00 => 3,
