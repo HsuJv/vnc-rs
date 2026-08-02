@@ -204,12 +204,26 @@ impl VncInner {
         }
     }
 
+    /// Track server-driven state carried in events as they are handed to the
+    /// consumer. Keeping `screen` current matters: every
+    /// FramebufferUpdateRequest is built from it, and after a desktop grows a
+    /// stale (smaller) request rect would make the server permanently withhold
+    /// updates for the area outside it.
+    fn observe_event(&mut self, event: &VncEvent) {
+        if let VncEvent::SetResolution(screen) = event {
+            self.screen = (screen.width, screen.height);
+        }
+    }
+
     async fn recv_event(&mut self) -> Result<VncEvent, VncError> {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
             match self.output_ch.recv().await {
-                Some(e) => Ok(e),
+                Some(e) => {
+                    self.observe_event(&e);
+                    Ok(e)
+                }
                 None => {
                     self.closed = true;
                     Err(VncError::ClientNotRunning)
@@ -228,7 +242,10 @@ impl VncInner {
                     Err(VncError::ClientNotRunning)
                 }
                 Err(TryRecvError::Empty) => Ok(None),
-                Ok(e) => Ok(Some(e)),
+                Ok(e) => {
+                    self.observe_event(&e);
+                    Ok(Some(e))
+                }
             }
             // Ok(self.output_ch.recv().await)
         }
