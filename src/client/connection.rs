@@ -16,7 +16,7 @@ use tokio::{
 use tokio_util::compat::*;
 use tracing::*;
 
-use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
+use crate::{codec, PixelFormat, Rect, ScreenLayout, VncEncoding, VncError, VncEvent, X11Event};
 const CHANNEL_SIZE: usize = 4096;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,6 +63,9 @@ impl ImageRect {
 struct VncInner {
     name: String,
     screen: (u16, u16),
+    /// Last screen layout announced by the server via ExtendedDesktopSize.
+    /// Echoed back (with the new size) in SetDesktopSize requests.
+    screen_layout: Vec<ScreenLayout>,
     input_ch: Sender<ClientMsg>,
     output_ch: Receiver<VncEvent>,
     decoding_stop: Option<oneshot::Sender<()>>,
@@ -162,12 +165,40 @@ impl VncInner {
         Ok(Self {
             name,
             screen: (width, height),
+            screen_layout: Vec::new(),
             input_ch: input_ch_tx,
             output_ch: output_ch_rx,
             decoding_stop: Some(decoding_stop_tx),
             net_conn_stop: Some(net_conn_stop_tx),
             closed: false,
         })
+    }
+
+    /// Track server-driven state carried in events as they are handed to the
+    /// consumer. Keeping `screen` current matters: every
+    /// FramebufferUpdateRequest is built from it, and after a desktop grows a
+    /// stale (smaller) request rect would make the server permanently withhold
+    /// updates for the area outside it.
+    fn observe_event(&mut self, event: &VncEvent) {
+        match event {
+            VncEvent::SetResolution(screen) => {
+                self.screen = (screen.width, screen.height);
+            }
+            VncEvent::ExtendedDesktopSize {
+                screen,
+                reason,
+                status,
+                layout,
+            } => {
+                // status is only meaningful for reason 1 (our own request);
+                // a failed request leaves the desktop unchanged.
+                if !(*reason == 1 && *status != 0) {
+                    self.screen = (screen.width, screen.height);
+                    self.screen_layout = layout.clone();
+                }
+            }
+            _ => {}
+        }
     }
 
     async fn input(&mut self, event: X11Event) -> Result<(), VncError> {
@@ -198,6 +229,30 @@ impl VncInner {
                     ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons)
                 }
                 X11Event::CopyText(text) => ClientMsg::ClientCutText(text),
+                X11Event::SetDesktopSize(width, height) => {
+                    // Echo the server-announced layout with the primary screen
+                    // resized to the requested dimensions (multi-monitor
+                    // layouts are collapsed to a single screen). Servers
+                    // reject layouts whose screens don't tile the new size.
+                    let mut screens = self.screen_layout.clone();
+                    screens.truncate(1);
+                    if screens.is_empty() {
+                        screens.push(ScreenLayout {
+                            id: 0,
+                            x: 0,
+                            y: 0,
+                            width,
+                            height,
+                            flags: 0,
+                        });
+                    } else if let Some(s) = screens.first_mut() {
+                        s.x = 0;
+                        s.y = 0;
+                        s.width = width;
+                        s.height = height;
+                    }
+                    ClientMsg::SetDesktopSize(width, height, screens)
+                }
             };
             self.input_ch.send(msg).await?;
             Ok(())
@@ -209,7 +264,10 @@ impl VncInner {
             Err(VncError::ClientNotRunning)
         } else {
             match self.output_ch.recv().await {
-                Some(e) => Ok(e),
+                Some(e) => {
+                    self.observe_event(&e);
+                    Ok(e)
+                }
                 None => {
                     self.closed = true;
                     Err(VncError::ClientNotRunning)
@@ -228,7 +286,10 @@ impl VncInner {
                     Err(VncError::ClientNotRunning)
                 }
                 Err(TryRecvError::Empty) => Ok(None),
-                Ok(e) => Ok(Some(e)),
+                Ok(e) => {
+                    self.observe_event(&e);
+                    Ok(Some(e))
+                }
             }
             // Ok(self.output_ch.recv().await)
         }
@@ -446,6 +507,37 @@ where
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
+                            .await?;
+                        }
+                        VncEncoding::ExtendedDesktopSizePseudo => {
+                            // x = reason, y = status, width/height = new size.
+                            // Payload:
+                            // +--------------+--------------+-------------------+
+                            // | 1            | U8           | number-of-screens |
+                            // | 3            |              | padding           |
+                            // +--------------+--------------+-------------------+
+                            // then number-of-screens SCREEN structures
+                            // (id U32, x U16, y U16, width U16, height U16, flags U32)
+                            let number_of_screens = stream.read_u8().await?;
+                            let mut padding = [0; 3];
+                            stream.read_exact(&mut padding).await?;
+                            let mut layout = Vec::with_capacity(number_of_screens as usize);
+                            for _ in 0..number_of_screens {
+                                layout.push(ScreenLayout {
+                                    id: stream.read_u32().await?,
+                                    x: stream.read_u16().await?,
+                                    y: stream.read_u16().await?,
+                                    width: stream.read_u16().await?,
+                                    height: stream.read_u16().await?,
+                                    flags: stream.read_u32().await?,
+                                });
+                            }
+                            output_func(VncEvent::ExtendedDesktopSize {
+                                screen: (rect.rect.width, rect.rect.height).into(),
+                                reason: rect.rect.x as u8,
+                                status: rect.rect.y as u8,
+                                layout,
+                            })
                             .await?;
                         }
                         VncEncoding::LastRectPseudo => {
