@@ -27,6 +27,12 @@ impl Decoder {
         if rect.width != 0 && rect.height != 0 {
             crate::limits::dimensions(rect.width, rect.height)?;
         }
+        if rect.width == 0 || rect.height == 0 {
+            return output_func(VncEvent::SetCursor(*rect, Vec::new())).await;
+        }
+        if format.bits_per_pixel != 32 || format.true_color_flag == 0 {
+            return Err(VncError::WrongPixelFormat);
+        }
         let _hotx = rect.x;
         let _hoty = rect.y;
         let w = rect.width;
@@ -53,7 +59,7 @@ impl Decoder {
             0xff_ff_00_ff => 2,
             0xff_00_ff_ff => 1,
             0x00_ff_ff_ff => 0,
-            _ => unreachable!(),
+            _ => return Err(VncError::WrongPixelFormat),
         };
         if format.big_endian_flag == 0 {
             alpha_idx = 3 - alpha_idx;

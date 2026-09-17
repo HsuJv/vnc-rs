@@ -44,6 +44,12 @@ impl Decoder {
     {
         crate::limits::dimensions(rect.width, rect.height)?;
         format.validate()?;
+        if format.bits_per_pixel != 32
+            || format.true_color_flag == 0
+            || [format.red_max, format.green_max, format.blue_max] != [255; 3]
+        {
+            return Err(VncError::WrongPixelFormat);
+        }
         let pixel_mask = ((format.red_max as u32) << format.red_shift)
             | ((format.green_max as u32) << format.green_shift)
             | ((format.blue_max as u32) << format.blue_shift);
@@ -53,13 +59,13 @@ impl Decoder {
             0xff_ff_00_ff => 8,
             0xff_00_ff_ff => 16,
             0x00_ff_ff_ff => 24,
-            _ => unreachable!(),
+            _ => return Err(VncError::WrongPixelFormat),
         };
 
         let ctrl = input.read_u8().await?;
         for i in 0..4 {
             if (ctrl >> i) & 1 == 1 {
-                self.zlibs[i].as_mut().unwrap().reset(true);
+                self.zlibs[i] = Some(flate2::Decompress::new(true));
             }
         }
 
@@ -251,6 +257,9 @@ impl Decoder {
         Fut: Future<Output = Result<(), VncError>>,
     {
         let num_colors = input.read_u8().await? as usize + 1;
+        if num_colors < 2 {
+            return Err(VncError::InvalidImageData);
+        }
         let palette_size = num_colors * 3;
 
         self.palette = initialized_vec(palette_size);
@@ -301,10 +310,12 @@ impl Decoder {
             }
             offset -= 1;
             let sp = ((data[index as usize] >> offset) & 0x01) as usize * 3;
-            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-            unsafe {
-                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
-            }
+            let color = self
+                .palette
+                .get(sp..sp + 3)
+                .ok_or(VncError::InvalidImageData)?;
+            let true_color = self.to_true_color(format, color);
+            image[dp..dp + 4].copy_from_slice(&true_color);
             dp += 4;
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
@@ -329,10 +340,12 @@ impl Decoder {
         let mut dp = 0;
         while i < total {
             let sp = data[i] as usize * 3;
-            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-            unsafe {
-                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
-            }
+            let color = self
+                .palette
+                .get(sp..sp + 3)
+                .ok_or(VncError::InvalidImageData)?;
+            let true_color = self.to_true_color(format, color);
+            image[dp..dp + 4].copy_from_slice(&true_color);
             dp += 4;
             i += 1;
         }
@@ -393,13 +406,7 @@ impl Decoder {
                     this_row[index + x] = (converted + rgb[index] as u16) & max[index];
                     color |= (this_row[x + index] as u32 & max[index] as u32) << shift[index];
                 }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        color.to_le_bytes().as_ptr(),
-                        image.as_mut_ptr().add(dp),
-                        4,
-                    )
-                }
+                image[dp..dp + 4].copy_from_slice(&color.to_le_bytes());
                 dp += 4;
                 sp += 3;
                 x += 3;
@@ -425,7 +432,12 @@ impl Decoder {
             input.read_exact(&mut data).await?;
         } else {
             let d = self.read_data(input).await?;
-            let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
+            let mut reader = ZlibReader::new(
+                self.zlibs[stream as usize]
+                    .take()
+                    .ok_or(VncError::InvalidImageData)?,
+                &d,
+            );
             data = initialized_vec(uncompressed_size);
             reader.read_exact(&mut data)?;
             self.zlibs[stream as usize] = Some(reader.into_inner()?);

@@ -13,3 +13,6 @@ pub(crate) use zrle::Decoder as ZrleDecoder;
 fn initialized_vec(len: usize) -> Vec<u8> {
     vec![0; len]
 }
+
+#[cfg(test)]
+mod tests;
