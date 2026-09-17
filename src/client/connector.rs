@@ -326,6 +326,9 @@ where
         if self.encodings.is_empty() {
             return Err(VncError::NoEncoding);
         }
+        if let Some(format) = &self.pixel_format {
+            format.validate()?;
+        }
         Ok(VncState::Handshake(self))
     }
 }
