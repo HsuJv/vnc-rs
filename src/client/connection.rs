@@ -5,11 +5,7 @@ use std::{future::Future, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
-        mpsc::{
-            channel,
-            error::{TryRecvError, TrySendError},
-            Receiver, Sender,
-        },
+        mpsc::{channel, error::TryRecvError, Receiver, Sender},
         oneshot, Mutex,
     },
 };
@@ -17,7 +13,7 @@ use tokio_util::compat::*;
 use tracing::*;
 
 use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
-const CHANNEL_SIZE: usize = 4096;
+const CHANNEL_SIZE: usize = 2;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -148,11 +144,11 @@ impl VncInner {
                         // do nothing here
                     } else {
                         error!("Error occurs during the decoding {:?}", e);
-                        let _ = output_func(VncEvent::Error(e.to_string())).await;
+                        let _ = output_ch_tx.try_send(VncEvent::Error(e.to_string()));
                     }
                 } else {
                     error!("Error occurs during the decoding {:?}", e);
-                    let _ = output_func(VncEvent::Error(e.to_string())).await;
+                    let _ = output_ch_tx.try_send(VncEvent::Error(e.to_string()));
                 }
             }
             trace!("Decoding thread stops");
@@ -179,7 +175,7 @@ impl VncInner {
         })
     }
 
-    async fn input(&mut self, event: X11Event) -> Result<(), VncError> {
+    fn input_message(&self, event: X11Event) -> Result<ClientMsg, VncError> {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
@@ -206,10 +202,14 @@ impl VncInner {
                 X11Event::PointerEvent(mouse) => {
                     ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons)
                 }
-                X11Event::CopyText(text) => ClientMsg::ClientCutText(text),
+                X11Event::CopyText(text) => {
+                    if text.len() > crate::limits::MAX_TEXT {
+                        return Err(VncError::InvalidImageData);
+                    }
+                    ClientMsg::ClientCutText(text)
+                }
             };
-            self.input_ch.send(msg).await?;
-            Ok(())
+            Ok(msg)
         }
     }
 
@@ -290,7 +290,18 @@ impl VncClient {
     /// Input a `X11Event` from the frontend
     ///
     pub async fn input(&self, event: X11Event) -> Result<(), VncError> {
-        self.inner.lock().await.input(event).await
+        let sender = {
+            let inner = self.inner.lock().await;
+            if inner.closed {
+                return Err(VncError::ClientNotRunning);
+            }
+            inner.input_ch.clone()
+        };
+        // Do not hold the client mutex while backpressure waits: close needs it.
+        let permit = sender.reserve().await?;
+        let inner = self.inner.lock().await;
+        permit.send(inner.input_message(event)?);
+        Ok(())
     }
 
     /// Receive a `VncEvent` from the engine
@@ -394,7 +405,26 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
-    mut stop_ch: oneshot::Receiver<()>,
+    stop_ch: oneshot::Receiver<()>,
+    encodings: &[VncEncoding],
+    screen: (u16, u16),
+) -> Result<(), VncError>
+where
+    S: AsyncRead + Unpin,
+    F: Fn(VncEvent) -> Fut,
+    Fut: Future<Output = Result<(), VncError>>,
+{
+    tokio::select! {
+        biased;
+        _ = stop_ch => Ok(()),
+        result = read_vnc_messages(stream, pf, output_func, encodings, screen) => result,
+    }
+}
+
+async fn read_vnc_messages<S, F, Fut>(
+    stream: &mut S,
+    pf: &PixelFormat,
+    output_func: &F,
     encodings: &[VncEncoding],
     mut screen: (u16, u16),
 ) -> Result<(), VncError>
@@ -410,7 +440,7 @@ where
     let mut cursor = codec::CursorDecoder::new();
 
     // main decoding loop
-    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
+    loop {
         let server_msg = ServerMsg::read(stream).await?;
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
@@ -488,7 +518,6 @@ where
             }
         }
     }
-    Ok(())
 }
 
 async fn async_connection_process_loop<S>(
@@ -503,52 +532,36 @@ where
     let mut buffer = [0; 65535];
     let mut pending = 0;
 
-    // main traffic loop
     loop {
-        if pending > 0 {
-            match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
-                Err(TrySendError::Full(_message)) => (),
-                Err(TrySendError::Closed(_message)) => break,
-                Ok(()) => pending = 0,
-            }
-        }
-
         tokio::select! {
             _ = &mut stop_ch => break,
-            result = stream.read(&mut buffer), if pending == 0 => {
-                match result {
-                    Ok(nread) => {
-                        if nread > 0 {
-                            match conn_ch.try_send(Ok(buffer[0..nread].to_owned())) {
-                                Err(TrySendError::Full(_message)) => pending = nread,
-                                Err(TrySendError::Closed(_message)) => break,
-                                Ok(()) => ()
-                            }
-                        } else {
-                            // According to the tokio's Doc
-                            // https://docs.rs/tokio/latest/tokio/io/trait.AsyncRead.html
-                            // if nread == 0, then EOF is reached
-                            trace!("Net Connection EOF detected");
-                            break;
-                        }
+            _ = conn_ch.closed() => break,
+            permit = conn_ch.reserve(), if pending > 0 => {
+                match permit {
+                    Ok(permit) => {
+                        permit.send(Ok(buffer[..pending].to_vec()));
+                        pending = 0;
                     }
-                    Err(e) => {
-                        error!("{}", e.to_string());
-                        break;
-                    }
+                    Err(_) => break,
                 }
             }
-            Some(msg) = input_ch.recv() => {
-                msg.write(&mut stream).await?;
+            result = stream.read(&mut buffer), if pending == 0 => {
+                match result {
+                    Ok(0) | Err(_) => break,
+                    Ok(length) => pending = length,
+                }
+            }
+            message = input_ch.recv() => {
+                let Some(message) = message else { break; };
+                tokio::select! {
+                    biased;
+                    _ = &mut stop_ch => break,
+                    result = message.write(&mut stream) => result?,
+                }
             }
         }
     }
-
-    // notify the decoding thread
-    let _ = conn_ch
-        .send(Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)))
-        .await;
-
+    // Dropping the bridge signals EOF without blocking shutdown on a full queue.
     Ok(())
 }
 

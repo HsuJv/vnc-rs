@@ -145,3 +145,150 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
         matches!(&output[1], VncEvent::RawImage(rect, bytes) if (rect.x, rect.y) == (127, 95) && bytes == &[1, 2, 3, 255])
     );
 }
+
+#[tokio::test]
+async fn shutdown_interrupts_a_full_event_queue() {
+    let (events, mut received) = channel(CHANNEL_SIZE);
+    for _ in 0..CHANNEL_SIZE {
+        events.try_send(VncEvent::Bell).unwrap();
+    }
+    let calls = std::cell::Cell::new(0);
+    let output = |event| {
+        calls.set(calls.get() + 1);
+        events.send(event)
+    };
+    let (stop, stopped) = oneshot::channel();
+    let mut input = &[2_u8][..];
+    let format = PixelFormat::rgba();
+    let deliver = |event| {
+        let send = output(event);
+        async {
+            send.await?;
+            Ok(())
+        }
+    };
+    let task = asycn_vnc_read_loop(&mut input, &format, &deliver, stopped, &[], (1, 1));
+    tokio::pin!(task);
+    assert!(futures::poll!(task.as_mut()).is_pending());
+    assert_eq!(calls.get(), 1);
+    assert_eq!(events.capacity(), 0);
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap();
+    for _ in 0..CHANNEL_SIZE {
+        assert!(matches!(received.try_recv(), Ok(VncEvent::Bell)));
+    }
+    assert!(received.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn full_bridge_resumes_without_unrelated_input_and_cancels_promptly() {
+    for cancel in [false, true] {
+        let (client, mut server) = duplex(1);
+        let (_input, input) = channel(CHANNEL_SIZE);
+        let (bridge, mut packets) = channel(CHANNEL_SIZE);
+        for _ in 0..CHANNEL_SIZE {
+            bridge.try_send(Ok(vec![0])).unwrap();
+        }
+        let (stop, stopped) = oneshot::channel();
+        server.write_all(&[7]).await.unwrap();
+        let task = async_connection_process_loop(client, input, bridge, stopped);
+        tokio::pin!(task);
+        assert!(futures::poll!(task.as_mut()).is_pending());
+        // The network byte was consumed while every bridge slot remains occupied.
+        assert_eq!(packets.len(), CHANNEL_SIZE);
+        assert!(futures::poll!(Box::pin(server.write_all(&[8]))).is_ready());
+        if !cancel {
+            assert_eq!(packets.recv().await.unwrap().unwrap(), [0]);
+            assert!(futures::poll!(task.as_mut()).is_pending());
+            assert_eq!(packets.recv().await.unwrap().unwrap(), [0]);
+            assert_eq!(packets.recv().await.unwrap().unwrap(), [7]);
+        }
+        stop.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut byte = [0];
+        assert_eq!(server.read(&mut byte).await.unwrap(), 0);
+    }
+}
+
+#[tokio::test]
+async fn shutdown_interrupts_a_blocked_socket_write() {
+    let (client, mut server) = duplex(1);
+    let (input, input_rx) = channel(CHANNEL_SIZE);
+    let (bridge, _packets) = channel(CHANNEL_SIZE);
+    let (stop, stopped) = oneshot::channel();
+    input
+        .send(ClientMsg::ClientCutText("test".into()))
+        .await
+        .unwrap();
+    let task = async_connection_process_loop(client, input_rx, bridge, stopped);
+    tokio::pin!(task);
+    assert!(futures::poll!(task.as_mut()).is_pending());
+    assert_eq!(input.capacity(), CHANNEL_SIZE);
+    assert_eq!(server.read_u8().await.unwrap(), 6); // first byte of ClientCutText
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn decoder_exit_releases_an_idle_socket() {
+    let (client, mut server) = duplex(1);
+    let (_input, input) = channel(CHANNEL_SIZE);
+    let (bridge, packets) = channel(CHANNEL_SIZE);
+    let (_stop, stopped) = oneshot::channel();
+    let task = async_connection_process_loop(client, input, bridge, stopped);
+    tokio::pin!(task);
+    assert!(futures::poll!(task.as_mut()).is_pending());
+    drop(packets);
+    tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
+    let (input_ch, mut input) = channel(CHANNEL_SIZE);
+    for _ in 0..CHANNEL_SIZE {
+        input_ch
+            .try_send(ClientMsg::ClientCutText(String::new()))
+            .unwrap();
+    }
+    let (_events, output_ch) = channel(CHANNEL_SIZE);
+    let (network_stop, network_stopped) = oneshot::channel();
+    let (decoder_stop, decoder_stopped) = oneshot::channel();
+    let client = VncClient {
+        inner: Arc::new(Mutex::new(VncInner {
+            name: String::new(),
+            screen: (1, 1),
+            input_ch,
+            output_ch,
+            decoding_stop: Some(decoder_stop),
+            net_conn_stop: Some(network_stop),
+            closed: false,
+        })),
+    };
+    let pending = client.input(X11Event::Refresh);
+    tokio::pin!(pending);
+    assert!(futures::poll!(pending.as_mut()).is_pending());
+    tokio::time::timeout(Duration::from_secs(1), client.close())
+        .await
+        .unwrap()
+        .unwrap();
+    network_stopped.await.unwrap();
+    decoder_stopped.await.unwrap();
+    // Even if capacity becomes available during close, no stale input is queued.
+    input.recv().await.unwrap();
+    assert!(matches!(pending.await, Err(VncError::ClientNotRunning)));
+    assert_eq!(input.len(), CHANNEL_SIZE - 1);
+}
