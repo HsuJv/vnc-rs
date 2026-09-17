@@ -53,7 +53,9 @@ where
                     let security_types =
                         SecurityType::read(&mut connector.stream, &connector.rfb_version).await?;
 
-                    assert!(!security_types.is_empty());
+                    if security_types.is_empty() {
+                        return Err(VncError::ConnectError);
+                    }
 
                     if security_types.contains(&SecurityType::None) {
                         match connector.rfb_version {
@@ -75,8 +77,16 @@ where
                                 info!("No auth needed in vnc3.8");
                                 SecurityType::write(&SecurityType::None, &mut connector.stream)
                                     .await?;
-                                let mut ok = [0; 4];
-                                connector.stream.read_exact(&mut ok).await?;
+                                let result = connector.stream.read_u32().await?.try_into()?;
+                                if let AuthResult::Failed = result {
+                                    return Err(VncError::General(
+                                        crate::limits::string(
+                                            &mut connector.stream,
+                                            crate::limits::MAX_NAME,
+                                        )
+                                        .await?,
+                                    ));
+                                }
                             }
                         }
                     } else {
@@ -116,15 +126,17 @@ where
                         auth.write(&mut connector.stream).await?;
                         let result = auth.finish(&mut connector.stream).await?;
                         if let AuthResult::Failed = result {
-                            if let VncVersion::RFB37 = connector.rfb_version {
+                            if connector.rfb_version != VncVersion::RFB38 {
                                 // In VNC Authentication (Section 7.2.2), if the authentication fails,
                                 // the server sends the SecurityResult message, but does not send an
                                 // error message before closing the connection.
                                 return Err(VncError::WrongPassword);
                             } else {
-                                let _ = connector.stream.read_u32().await?;
-                                let mut err_msg = String::new();
-                                connector.stream.read_to_string(&mut err_msg).await?;
+                                let err_msg = crate::limits::string(
+                                    &mut connector.stream,
+                                    crate::limits::MAX_NAME,
+                                )
+                                .await?;
                                 return Err(VncError::General(err_msg));
                             }
                         }
