@@ -1,7 +1,7 @@
 use futures::TryStreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::{future::Future, sync::Arc, vec};
+use std::{future::Future, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
@@ -31,21 +31,23 @@ struct ImageRect {
     encoding: VncEncoding,
 }
 
-impl From<[u8; 12]> for ImageRect {
-    fn from(buf: [u8; 12]) -> Self {
-        Self {
+impl TryFrom<[u8; 12]> for ImageRect {
+    type Error = VncError;
+    fn try_from(buf: [u8; 12]) -> Result<Self, VncError> {
+        Ok(Self {
             rect: Rect {
                 x: ((buf[0] as u16) << 8) | buf[1] as u16,
                 y: ((buf[2] as u16) << 8) | buf[3] as u16,
                 width: ((buf[4] as u16) << 8) | buf[5] as u16,
                 height: ((buf[6] as u16) << 8) | buf[7] as u16,
             },
-            encoding: (((buf[8] as u32) << 24)
-                | ((buf[9] as u32) << 16)
-                | ((buf[10] as u32) << 8)
-                | (buf[11] as u32))
-                .into(),
-        }
+            encoding: VncEncoding::from_wire(
+                ((buf[8] as u32) << 24)
+                    | ((buf[9] as u32) << 16)
+                    | ((buf[10] as u32) << 8)
+                    | (buf[11] as u32),
+            )?,
+        })
     }
 }
 
@@ -56,7 +58,7 @@ impl ImageRect {
     {
         let mut rect_buf = [0_u8; 12];
         reader.read_exact(&mut rect_buf).await?;
-        Ok(rect_buf.into())
+        rect_buf.try_into()
     }
 }
 
@@ -100,7 +102,7 @@ impl VncInner {
             .await?;
 
         trace!("client encodings: {:?}", encodings);
-        send_client_encoding(&mut stream, encodings).await?;
+        send_client_encoding(&mut stream, encodings.clone()).await?;
 
         trace!("Require the first frame");
         input_ch_tx
@@ -129,8 +131,15 @@ impl VncInner {
             };
 
             let pf = pixel_format.as_ref().unwrap();
-            if let Err(e) =
-                asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
+            if let Err(e) = asycn_vnc_read_loop(
+                &mut conn_ch_rx,
+                pf,
+                &output_func,
+                decoding_stop_rx,
+                &encodings,
+                (width, height),
+            )
+            .await
             {
                 if let VncError::IoError(e) = e {
                     if let std::io::ErrorKind::UnexpectedEof = e.kind() {
@@ -343,6 +352,7 @@ where
 
     let screen_width = stream.read_u16().await?;
     let screen_height = stream.read_u16().await?;
+    crate::limits::dimensions(screen_width, screen_height)?;
     let mut send_our_pf = false;
 
     output_func(VncEvent::SetResolution(
@@ -358,10 +368,7 @@ where
         send_our_pf = true;
     }
 
-    let name_len = stream.read_u32().await?;
-    let mut name_buf = vec![0_u8; name_len as usize];
-    stream.read_exact(&mut name_buf).await?;
-    let name = String::from_utf8_lossy(&name_buf).into_owned();
+    let name = crate::limits::string(stream, crate::limits::MAX_NAME).await?;
 
     if send_our_pf {
         trace!("Send customized pixel format {:#?}", pf);
@@ -388,6 +395,8 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     pf: &PixelFormat,
     output_func: &F,
     mut stop_ch: oneshot::Receiver<()>,
+    encodings: &[VncEncoding],
+    mut screen: (u16, u16),
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -408,7 +417,17 @@ where
             ServerMsg::FramebufferUpdate(rect_num) => {
                 for _ in 0..rect_num {
                     let rect = ImageRect::read(stream).await?;
-                    // trace!("Encoding: {:?}", rect.encoding);
+                    if rect.encoding != VncEncoding::Raw && !encodings.contains(&rect.encoding) {
+                        return Err(VncError::InvalidImageData);
+                    }
+                    if !matches!(
+                        rect.encoding,
+                        VncEncoding::DesktopSizePseudo
+                            | VncEncoding::LastRectPseudo
+                            | VncEncoding::CursorPseudo
+                    ) {
+                        crate::limits::rectangle(&rect.rect, screen)?;
+                    }
 
                     match rect.encoding {
                         VncEncoding::Raw => {
@@ -422,6 +441,7 @@ where
                             let mut src_rect = rect.rect;
                             src_rect.x = source_x;
                             src_rect.y = source_y;
+                            crate::limits::rectangle(&src_rect, screen)?;
                             output_func(VncEvent::Copy(rect.rect, src_rect)).await?;
                         }
                         VncEncoding::Tight => {
@@ -443,6 +463,11 @@ where
                             cursor.decode(pf, &rect.rect, stream, output_func).await?;
                         }
                         VncEncoding::DesktopSizePseudo => {
+                            crate::limits::dimensions(rect.rect.width, rect.rect.height)?;
+                            if rect.rect.x != 0 || rect.rect.y != 0 {
+                                return Err(VncError::InvalidImageData);
+                            }
+                            screen = (rect.rect.width, rect.rect.height);
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
@@ -526,3 +551,6 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

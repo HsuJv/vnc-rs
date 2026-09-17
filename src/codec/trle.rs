@@ -3,7 +3,7 @@ use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
-use super::uninit_vec;
+use super::initialized_vec;
 
 async fn read_run_length<S>(reader: &mut S) -> Result<usize, VncError>
 where
@@ -63,8 +63,13 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
+        crate::limits::dimensions(rect.width, rect.height)?;
+        format.validate()?;
         let data_len = input.read_u32().await? as usize;
-        let mut zlib_data = uninit_vec(data_len);
+        if data_len > crate::limits::MAX_COMPRESSED {
+            return Err(VncError::InvalidImageData);
+        }
+        let mut zlib_data = initialized_vec(data_len);
         input.read_exact(&mut zlib_data).await?;
 
         let bpp = format.bits_per_pixel as usize / 8;

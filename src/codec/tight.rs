@@ -4,7 +4,7 @@ use std::io::Read;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
-use super::{uninit_vec, zlib::ZlibReader};
+use super::{initialized_vec, zlib::ZlibReader};
 
 const MAX_PALETTE: usize = 256;
 
@@ -42,6 +42,8 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
+        crate::limits::dimensions(rect.width, rect.height)?;
+        format.validate()?;
         let pixel_mask = ((format.red_max as u32) << format.red_shift)
             | ((format.green_max as u32) << format.green_shift)
             | ((format.blue_max as u32) << format.blue_shift);
@@ -108,7 +110,7 @@ impl Decoder {
             }
             len
         };
-        let mut data = uninit_vec(len);
+        let mut data = initialized_vec(len);
         input.read_exact(&mut data).await?;
         Ok(data)
     }
@@ -251,7 +253,7 @@ impl Decoder {
         let num_colors = input.read_u8().await? as usize + 1;
         let palette_size = num_colors * 3;
 
-        self.palette = uninit_vec(palette_size);
+        self.palette = initialized_vec(palette_size);
         input.read_exact(&mut self.palette).await?;
 
         let bpp = if num_colors <= 2 { 1 } else { 8 };
@@ -288,7 +290,7 @@ impl Decoder {
     {
         // Convert indexed (palette based) image data to RGB
         let total = rect.width as usize * rect.height as usize;
-        let mut image = uninit_vec(total * 4);
+        let mut image = initialized_vec(total * 4);
         let mut offset = 8_usize;
         let mut index = -1_isize;
         let mut dp = 0;
@@ -322,7 +324,7 @@ impl Decoder {
     {
         // Convert indexed (palette based) image data to RGB
         let total = rect.width as usize * rect.height as usize;
-        let mut image = uninit_vec(total * 4);
+        let mut image = initialized_vec(total * 4);
         let mut i = 0;
         let mut dp = 0;
         while i < total {
@@ -358,7 +360,7 @@ impl Decoder {
         let data = self
             .read_tight_data(stream, input, uncompressed_size)
             .await?;
-        let mut image = uninit_vec(rect.width as usize * rect.height as usize * 4);
+        let mut image = initialized_vec(rect.width as usize * rect.height as usize * 4);
 
         let row_len = rect.width as usize * 3 + 3;
         let mut row_0 = vec![0_u16; row_len];
@@ -419,12 +421,12 @@ impl Decoder {
     {
         let mut data;
         if uncompressed_size < 12 {
-            data = uninit_vec(uncompressed_size);
+            data = initialized_vec(uncompressed_size);
             input.read_exact(&mut data).await?;
         } else {
             let d = self.read_data(input).await?;
             let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
-            data = uninit_vec(uncompressed_size);
+            data = initialized_vec(uncompressed_size);
             reader.read_exact(&mut data)?;
             self.zlibs[stream as usize] = Some(reader.into_inner()?);
         };

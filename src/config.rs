@@ -20,19 +20,22 @@ pub enum VncEncoding {
 
 impl From<u32> for VncEncoding {
     fn from(num: u32) -> Self {
-        // Safe match instead of transmute — unknown encoding IDs fall back to Raw
-        // instead of causing UB (the original transmute is unsound for any value
-        // not matching a valid discriminant).
+        Self::from_wire(num).unwrap_or(Self::Raw)
+    }
+}
+
+impl VncEncoding {
+    pub(crate) fn from_wire(num: u32) -> Result<Self, VncError> {
         match num as i32 {
-            0 => VncEncoding::Raw,
-            1 => VncEncoding::CopyRect,
-            7 => VncEncoding::Tight,
-            15 => VncEncoding::Trle,
-            16 => VncEncoding::Zrle,
-            -239 => VncEncoding::CursorPseudo,
-            -223 => VncEncoding::DesktopSizePseudo,
-            -224 => VncEncoding::LastRectPseudo,
-            _ => VncEncoding::Raw,
+            0 => Ok(Self::Raw),
+            1 => Ok(Self::CopyRect),
+            7 => Ok(Self::Tight),
+            15 => Ok(Self::Trle),
+            16 => Ok(Self::Zrle),
+            -239 => Ok(Self::CursorPseudo),
+            -223 => Ok(Self::DesktopSizePseudo),
+            -224 => Ok(Self::LastRectPseudo),
+            _ => Err(VncError::InvalidImageData),
         }
     }
 }

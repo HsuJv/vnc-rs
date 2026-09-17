@@ -159,7 +159,7 @@ impl ServerMsg {
                 // | 2            | U16          | first-color      |
                 // | 2            | U16          | number-of-colors |
                 // +--------------+--------------+------------------+
-                unimplemented!()
+                Err(VncError::WrongServerMessage)
             }
             2 => {
                 // Bell
@@ -182,11 +182,8 @@ impl ServerMsg {
                 // +--------------+--------------+--------------+
                 let mut padding = [0; 3];
                 reader.read_exact(&mut padding).await?;
-                let len = reader.read_u32().await?;
-                let mut buffer_str = vec![0; len as usize];
-                reader.read_exact(&mut buffer_str).await?;
                 Ok(Self::ServerCutText(
-                    String::from_utf8_lossy(&buffer_str).to_string(),
+                    crate::limits::string(reader, crate::limits::MAX_TEXT).await?,
                 ))
             }
             _ => Err(VncError::WrongServerMessage),
