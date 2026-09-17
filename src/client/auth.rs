@@ -97,9 +97,17 @@ pub(super) enum AuthResult {
     Failed = 1,
 }
 
-impl From<u32> for AuthResult {
-    fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+impl TryFrom<u32> for AuthResult {
+    type Error = VncError;
+
+    fn try_from(num: u32) -> Result<Self, Self::Error> {
+        match num {
+            0 => Ok(Self::Ok),
+            1 => Ok(Self::Failed),
+            _ => Err(VncError::General(format!(
+                "Unknown authentication result: {num}"
+            ))),
+        }
     }
 }
 
@@ -154,6 +162,30 @@ impl AuthHelper {
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let result = reader.read_u32().await?;
-        Ok(result.into())
+        result.try_into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn authentication_result_is_checked() {
+        for status in [0_u32, 1, 2, 256, u32::MAX] {
+            let (mut server, mut client) = tokio::io::duplex(4);
+            server.write_all(&status.to_be_bytes()).await.unwrap();
+            let auth = AuthHelper {
+                challenge: [0; 16],
+                key: [0; 8],
+            };
+
+            let result = auth.finish(&mut client).await;
+            match status {
+                0 => assert!(matches!(result, Ok(AuthResult::Ok))),
+                1 => assert!(matches!(result, Ok(AuthResult::Failed))),
+                _ => assert!(matches!(result, Err(VncError::General(_)))),
+            }
+        }
     }
 }
