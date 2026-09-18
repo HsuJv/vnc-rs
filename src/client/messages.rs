@@ -9,6 +9,8 @@ pub(super) enum ClientMsg {
     KeyEvent(u32, bool),
     PointerEvent(u16, u16, u8),
     ClientCutText(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    SetDesktopSize(crate::DesktopLayout),
 }
 
 impl ClientMsg {
@@ -98,6 +100,24 @@ impl ClientMsg {
                 let mut payload = vec![5, mask];
                 payload.write_u16(x).await?;
                 payload.write_u16(y).await?;
+                writer.write_all(&payload).await?;
+                Ok(())
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ClientMsg::SetDesktopSize(layout) => {
+                layout.validate()?;
+                let mut payload = vec![251, 0];
+                payload.extend_from_slice(&layout.width.to_be_bytes());
+                payload.extend_from_slice(&layout.height.to_be_bytes());
+                payload.extend_from_slice(&[layout.screens.len() as u8, 0]);
+                for screen in layout.screens {
+                    payload.extend_from_slice(&screen.id.to_be_bytes());
+                    payload.extend_from_slice(&screen.x.to_be_bytes());
+                    payload.extend_from_slice(&screen.y.to_be_bytes());
+                    payload.extend_from_slice(&screen.width.to_be_bytes());
+                    payload.extend_from_slice(&screen.height.to_be_bytes());
+                    payload.extend_from_slice(&screen.flags.to_be_bytes());
+                }
                 writer.write_all(&payload).await?;
                 Ok(())
             }

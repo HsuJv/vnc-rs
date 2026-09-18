@@ -1,7 +1,14 @@
 use futures::TryStreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::{future::Future, sync::Arc, vec};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    vec,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
@@ -25,6 +32,7 @@ use tokio::spawn;
 use wasm_bindgen_futures::spawn_local as spawn;
 
 use super::messages::{ClientMsg, ServerMsg};
+use super::resize::DesktopState;
 
 struct ImageRect {
     rect: Rect,
@@ -62,7 +70,8 @@ impl ImageRect {
 
 struct VncInner {
     name: String,
-    screen: (u16, u16),
+    screen: Arc<AtomicU32>,
+    desktop: Arc<DesktopState>,
     input_ch: Sender<ClientMsg>,
     output_ch: Receiver<VncEvent>,
     decoding_stop: Option<oneshot::Sender<()>>,
@@ -99,8 +108,13 @@ impl VncInner {
             })
             .await?;
 
+        let screen = Arc::new(AtomicU32::new((u32::from(width) << 16) | u32::from(height)));
+        let decoder_screen = Arc::clone(&screen);
+        let desktop = Arc::new(DesktopState::default());
+        let decoder_desktop = Arc::clone(&desktop);
+        let network_desktop = Arc::clone(&desktop);
         trace!("client encodings: {:?}", encodings);
-        send_client_encoding(&mut stream, encodings).await?;
+        send_client_encoding(&mut stream, encodings.clone()).await?;
 
         trace!("Require the first frame");
         input_ch_tx
@@ -129,9 +143,11 @@ impl VncInner {
             };
 
             let pf = pixel_format.as_ref().unwrap();
-            if let Err(e) =
-                asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
-            {
+            let result = tokio::select! {
+                _ = decoding_stop_rx => Ok(()),
+                result = asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, &encodings, &decoder_screen, &decoder_desktop) => result,
+            };
+            if let Err(e) = result {
                 if let VncError::IoError(e) = e {
                     if let std::io::ErrorKind::UnexpectedEof = e.kind() {
                         // this should be a normal case when the network connection disconnects
@@ -146,6 +162,7 @@ impl VncInner {
                     let _ = output_func(VncEvent::Error(e.to_string())).await;
                 }
             }
+            decoder_desktop.close();
             trace!("Decoding thread stops");
         });
 
@@ -155,13 +172,15 @@ impl VncInner {
             let _ =
                 async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx)
                     .await;
+            network_desktop.close();
             trace!("Net Connection thread stops");
         });
 
         info!("VNC Client {name} starts");
         Ok(Self {
             name,
-            screen: (width, height),
+            screen,
+            desktop,
             input_ch: input_ch_tx,
             output_ch: output_ch_rx,
             decoding_stop: Some(decoding_stop_tx),
@@ -174,13 +193,15 @@ impl VncInner {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
+            let size = self.screen.load(Ordering::Acquire);
+            let (width, height) = ((size >> 16) as u16, size as u16);
             let msg = match event {
                 X11Event::Refresh => ClientMsg::FramebufferUpdateRequest(
                     Rect {
                         x: 0,
                         y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
+                        width,
+                        height,
                     },
                     1,
                 ),
@@ -188,8 +209,8 @@ impl VncInner {
                     Rect {
                         x: 0,
                         y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
+                        width,
+                        height,
                     },
                     0, // non-incremental: server sends entire framebuffer
                 ),
@@ -237,6 +258,7 @@ impl VncInner {
     /// Stop the VNC engine and release resources
     ///
     fn close(&mut self) -> Result<(), VncError> {
+        self.desktop.close();
         if self.net_conn_stop.is_some() {
             let net_conn_stop: oneshot::Sender<()> = self.net_conn_stop.take().unwrap();
             let _ = net_conn_stop.send(());
@@ -259,6 +281,8 @@ impl Drop for VncInner {
 
 pub struct VncClient {
     inner: Arc<Mutex<VncInner>>,
+    desktop: Arc<DesktopState>,
+    input_ch: Sender<ClientMsg>,
 }
 
 impl VncClient {
@@ -271,11 +295,31 @@ impl VncClient {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(
-                VncInner::new(stream, shared, pixel_format, encodings).await?,
-            )),
+            desktop: Arc::clone(&inner.desktop),
+            input_ch: inner.input_ch.clone(),
+            inner: Arc::new(Mutex::new(inner)),
         })
+    }
+
+    /// Last validated ExtendedDesktopSize layout; None means support is unconfirmed.
+    pub fn desktop_layout(&self) -> Option<crate::DesktopLayout> {
+        self.desktop.layout()
+    }
+
+    /// Request a negotiated single-screen resize and wait for the server result.
+    /// Available on native targets with a Tokio time driver; wasm supports observation only.
+    /// Continue draining events concurrently. Each queue/confirmation wait is bounded
+    /// to five seconds. Cancellation after dispatch makes later requests uncertain;
+    /// reconnect and observe before retrying. This never requests a framebuffer refresh.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn resize_desktop(
+        &self,
+        width: u16,
+        height: u16,
+    ) -> Result<crate::DesktopLayout, crate::ResizeError> {
+        self.desktop.request(&self.input_ch, width, height).await
     }
 
     /// Input a `X11Event` from the frontend
@@ -308,6 +352,8 @@ impl Clone for VncClient {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            desktop: Arc::clone(&self.desktop),
+            input_ch: self.input_ch.clone(),
         }
     }
 }
@@ -387,7 +433,9 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
-    mut stop_ch: oneshot::Receiver<()>,
+    encodings: &[VncEncoding],
+    screen: &AtomicU32,
+    desktop: &DesktopState,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -401,15 +449,26 @@ where
     let mut cursor = codec::CursorDecoder::new();
 
     // main decoding loop
-    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
+    loop {
         let server_msg = ServerMsg::read(stream).await?;
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
             ServerMsg::FramebufferUpdate(rect_num) => {
+                let mut updates = Vec::new();
+                let mut framebuffer_changed = false;
                 for _ in 0..rect_num {
                     let rect = ImageRect::read(stream).await?;
-                    // trace!("Encoding: {:?}", rect.encoding);
-
+                    if !matches!(
+                        rect.encoding,
+                        VncEncoding::CursorPseudo
+                            | VncEncoding::ExtendedDesktopSizePseudo
+                            | VncEncoding::LastRectPseudo
+                    ) {
+                        if !updates.is_empty() {
+                            return Err(VncError::InvalidImageData);
+                        }
+                        framebuffer_changed = true;
+                    }
                     match rect.encoding {
                         VncEncoding::Raw => {
                             raw_decoder
@@ -442,16 +501,47 @@ where
                         VncEncoding::CursorPseudo => {
                             cursor.decode(pf, &rect.rect, stream, output_func).await?;
                         }
+                        VncEncoding::ExtendedDesktopSizePseudo => {
+                            // Confirm only after the entire message excludes framebuffer changes.
+                            // Cursor metadata may accompany desktop layout updates.
+                            if framebuffer_changed
+                                || updates.len() >= 16
+                                || !encodings.contains(&VncEncoding::ExtendedDesktopSizePseudo)
+                            {
+                                return Err(VncError::InvalidImageData);
+                            }
+                            updates.push(crate::DesktopUpdate::read(stream, rect.rect).await?);
+                        }
                         VncEncoding::DesktopSizePseudo => {
+                            desktop.legacy_resize();
+                            screen.store(
+                                (u32::from(rect.rect.width) << 16) | u32::from(rect.rect.height),
+                                Ordering::Release,
+                            );
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
                             .await?;
                         }
                         VncEncoding::LastRectPseudo => {
+                            if !updates.is_empty()
+                                && !encodings.contains(&VncEncoding::LastRectPseudo)
+                            {
+                                return Err(VncError::InvalidImageData);
+                            }
                             break;
                         }
                     }
+                }
+                for update in updates {
+                    if let Some(layout) = &update.layout {
+                        screen.store(
+                            (u32::from(layout.width) << 16) | u32::from(layout.height),
+                            Ordering::Release,
+                        );
+                    }
+                    desktop.observe(&update);
+                    output_func(VncEvent::DesktopUpdate(update)).await?;
                 }
             }
             // SetColorMapEntries,
@@ -463,7 +553,6 @@ where
             }
         }
     }
-    Ok(())
 }
 
 async fn async_connection_process_loop<S>(
@@ -526,3 +615,6 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod resize_tests;

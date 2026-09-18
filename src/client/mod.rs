@@ -6,3 +6,5 @@ mod security;
 
 pub use connection::VncClient;
 pub use connector::VncConnector;
+
+mod resize;
