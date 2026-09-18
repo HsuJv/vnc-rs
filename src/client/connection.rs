@@ -455,7 +455,7 @@ where
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
             ServerMsg::FramebufferUpdate(rect_num) => {
-                let mut updates = Vec::new();
+                let mut updates = crate::desktop::UpdateBatch::default();
                 let mut framebuffer_changed = false;
                 for _ in 0..rect_num {
                     let rect = ImageRect::read(stream).await?;
@@ -506,12 +506,11 @@ where
                             // Confirm only after the entire message excludes framebuffer changes.
                             // Cursor metadata may accompany desktop layout updates.
                             if framebuffer_changed
-                                || updates.len() >= 16
                                 || !encodings.contains(&VncEncoding::ExtendedDesktopSizePseudo)
                             {
                                 return Err(VncError::InvalidImageData);
                             }
-                            updates.push(crate::DesktopUpdate::read(stream, rect.rect).await?);
+                            updates.push(crate::DesktopUpdate::read(stream, rect.rect).await?)?;
                         }
                         VncEncoding::DesktopSizePseudo => {
                             desktop.legacy_resize();
@@ -534,7 +533,7 @@ where
                         }
                     }
                 }
-                for update in updates {
+                for update in updates.into_updates() {
                     if let Some(layout) = &update.layout {
                         screen.store(
                             (u32::from(layout.width) << 16) | u32::from(layout.height),

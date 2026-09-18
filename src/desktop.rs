@@ -45,6 +45,42 @@ pub struct DesktopUpdate {
     pub layout: Option<DesktopLayout>,
 }
 
+// Bound retained layouts, including each screen allocation, while accepting queued
+// single-screen updates across the full u16 framebuffer rectangle count.
+#[derive(Default)]
+pub(crate) struct UpdateBatch {
+    updates: Vec<DesktopUpdate>,
+    retained_bytes: usize,
+}
+
+impl UpdateBatch {
+    const MAX_RETAINED_BYTES: usize = 4 * 1024 * 1024;
+
+    pub(crate) fn push(&mut self, update: DesktopUpdate) -> Result<(), VncError> {
+        let screens = update
+            .layout
+            .as_ref()
+            .map_or(0, |layout| layout.screens.capacity());
+        let bytes = screens
+            .checked_mul(std::mem::size_of::<ScreenLayout>())
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<DesktopUpdate>()))
+            .and_then(|bytes| bytes.checked_add(self.retained_bytes))
+            .filter(|bytes| *bytes <= Self::MAX_RETAINED_BYTES)
+            .ok_or(VncError::InvalidImageData)?;
+        self.updates.push(update);
+        self.retained_bytes = bytes;
+        Ok(())
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
+    pub(crate) fn into_updates(self) -> Vec<DesktopUpdate> {
+        self.updates
+    }
+}
+
 impl DesktopLayout {
     pub(crate) fn validate(&self) -> Result<(), VncError> {
         dimensions(self.width, self.height)?;

@@ -498,3 +498,113 @@ async fn cursor_metadata_can_precede_or_follow_resize_confirmation() {
         task.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn queued_layouts_confirm_only_after_the_complete_batch_then_decode_pixels() {
+    let (stream, mut server) = duplex(8192);
+    let (staged, staged_rx) = oneshot::channel();
+    let (finish, finish_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        handshake(&mut server, (80, 60)).await;
+        server.write_all(&single(0, 0, 80, 60)).await.unwrap();
+        let mut request = [0; 34];
+        server.read_exact(&mut request).await.unwrap();
+        let mut packet = vec![0, 0, 0, 34];
+        packet.extend(&single(1, 0, 160, 100)[4..]);
+        for index in 0..32 {
+            packet.extend(&single(index % 2 * 2, 0, 160, 100)[4..]);
+        }
+        server.write_all(&packet).await.unwrap();
+        staged.send(()).unwrap();
+        finish_rx.await.unwrap();
+        server
+            .write_all(&single(2, 0, 160, 100)[4..])
+            .await
+            .unwrap();
+        let mut raw = rect_header(
+            Rect {
+                x: 159,
+                y: 99,
+                width: 1,
+                height: 1,
+            },
+            0,
+        );
+        raw.extend([1, 2, 3, 0]);
+        server.write_all(&raw).await.unwrap();
+        let mut byte = [0];
+        let _ = server.read(&mut byte).await;
+    });
+    let client = extended(stream).await;
+    event(&client).await;
+    event(&client).await;
+    let request_client = client.clone();
+    let mut request = tokio::spawn(async move { request_client.resize_desktop(160, 100).await });
+    staged_rx.await.unwrap();
+    assert!(timeout(Duration::from_millis(50), &mut request)
+        .await
+        .is_err());
+    assert_eq!(client.desktop_layout().unwrap().width, 80);
+    finish.send(()).unwrap();
+    assert_eq!(request.await.unwrap().unwrap().width, 160);
+    for index in 0..34 {
+        let VncEvent::DesktopUpdate(update) = event(&client).await else {
+            panic!("layout expected")
+        };
+        let expected = if index == 0 {
+            DesktopReason::ThisClient
+        } else if index % 2 == 1 && index != 33 {
+            DesktopReason::Server
+        } else {
+            DesktopReason::OtherClient
+        };
+        assert_eq!(update.reason, expected);
+    }
+    assert!(
+        matches!(event(&client).await, VncEvent::RawImage(rect, _) if rect.x == 159 && rect.y == 99)
+    );
+    client.close().await.unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_or_excessive_queued_layouts_never_publish_or_confirm() {
+    for excessive in [false, true] {
+        let (stream, mut server) = duplex(8192);
+        let task = tokio::spawn(async move {
+            handshake(&mut server, (80, 60)).await;
+            server.write_all(&single(0, 0, 80, 60)).await.unwrap();
+            let mut request = [0; 34];
+            server.read_exact(&mut request).await.unwrap();
+            let count = if excessive { 1100_u16 } else { 34 };
+            let mut packet = vec![0, 0];
+            packet.extend(count.to_be_bytes());
+            packet.extend(&single(1, 0, 160, 100)[4..]);
+            let screens: Vec<_> = (0..255).map(|id| (id, 0, 0, 160, 100, 0)).collect();
+            let queued = if excessive {
+                update(2, 0, 160, 100, &screens)
+            } else {
+                single(2, 0, 160, 100)
+            };
+            for _ in 1..count - 1 {
+                packet.extend(&queued[4..]);
+            }
+            packet.extend(&single(2, 0, if excessive { 160 } else { 0 }, 100)[4..]);
+            // Budget exhaustion closes the reader before the full payload is consumed.
+            let _ = server.write_all(&packet).await;
+            let mut byte = [0];
+            let _ = server.read(&mut byte).await;
+        });
+        let client = extended(stream).await;
+        event(&client).await;
+        event(&client).await;
+        assert_eq!(
+            client.resize_desktop(160, 100).await,
+            Err(ResizeError::Uncertain)
+        );
+        assert_eq!(client.desktop_layout().unwrap().width, 80);
+        assert!(matches!(event(&client).await, VncEvent::Error(_)));
+        client.close().await.unwrap();
+        task.await.unwrap();
+    }
+}
