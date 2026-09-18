@@ -97,7 +97,7 @@ impl DesktopState {
         // for capacity cannot leave a command queued for later transmission.
         let permit = timeout(RESIZE_TIMEOUT, input.reserve())
             .await
-            .map_err(|_| ResizeError::Timeout)?
+            .map_err(|_| ResizeError::DispatchTimeout)?
             .map_err(|_| ResizeError::Disconnected)?;
         let receiver = {
             let mut state = self.lock();
@@ -152,5 +152,58 @@ impl Drop for PendingGuard {
             state.pending = None;
             state.uncertain = true;
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::ScreenLayout;
+
+    #[tokio::test]
+    async fn full_queue_timeout_does_not_dispatch_or_poison_a_retry() {
+        let state = Arc::new(DesktopState::default());
+        state.lock().layout = Some(DesktopLayout {
+            width: 10,
+            height: 10,
+            screens: vec![ScreenLayout {
+                id: 7,
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+                flags: 0,
+            }],
+        });
+        let (input, mut receiver) = tokio::sync::mpsc::channel(1);
+        input.send(ClientMsg::KeyEvent(0, false)).await.unwrap();
+        assert_eq!(
+            state.request(&input, 20, 20).await,
+            Err(ResizeError::DispatchTimeout)
+        );
+        {
+            let inner = state.lock();
+            assert!(inner.pending.is_none());
+            assert!(!inner.busy && !inner.uncertain);
+        }
+        assert!(matches!(
+            receiver.recv().await,
+            Some(ClientMsg::KeyEvent(0, false))
+        ));
+        assert!(receiver.try_recv().is_err());
+        let retry_state = Arc::clone(&state);
+        let retry = tokio::spawn(async move { retry_state.request(&input, 20, 20).await });
+        let Some(ClientMsg::SetDesktopSize(requested)) = receiver.recv().await else {
+            panic!("retry did not dispatch resize");
+        };
+        state.observe(&DesktopUpdate {
+            reason: DesktopReason::ThisClient,
+            status: DesktopStatus::Success,
+            layout: Some(requested.clone()),
+        });
+        assert_eq!(retry.await.unwrap(), Ok(requested));
+        let inner = state.lock();
+        assert!(inner.pending.is_none());
+        assert!(!inner.busy && !inner.uncertain);
     }
 }

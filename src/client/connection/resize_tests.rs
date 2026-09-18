@@ -65,8 +65,9 @@ async fn negotiation_identity_confirmation_and_refresh_bounds() {
     let task = tokio::spawn(async move {
         handshake(&mut server, (80, 60)).await;
         server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-        let mut request = [0; 24];
+        let mut request = [0; 34];
         server.read_exact(&mut request).await.unwrap();
+        assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
         assert_eq!(&request[..8], &[251, 0, 0, 160, 0, 100, 1, 0]);
         assert_eq!(&request[8..12], &42u32.to_be_bytes());
         assert_eq!(&request[20..24], &0x8000_0001u32.to_be_bytes());
@@ -136,8 +137,9 @@ async fn rejected_and_forwarded_replies_do_not_apply_undefined_geometry() {
         let task = tokio::spawn(async move {
             handshake(&mut server, (80, 60)).await;
             server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-            let mut request = [0; 24];
+            let mut request = [0; 34];
             server.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
             server
                 .write_all(&update(1, status, 0, 65535, &[]))
                 .await
@@ -200,8 +202,9 @@ async fn cancellation_stalled_reply_and_concurrency_are_bounded() {
     let task = tokio::spawn(async move {
         handshake(&mut server, (80, 60)).await;
         server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-        let mut request = [0; 24];
+        let mut request = [0; 34];
         server.read_exact(&mut request).await.unwrap();
+        assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
         sent.send(()).unwrap();
         // Start an incomplete layout payload to exercise decoder cancellation too.
         server
@@ -275,8 +278,9 @@ async fn timeout_and_disconnect_never_report_dispatch_as_success() {
         let task = tokio::spawn(async move {
             handshake(&mut server, (80, 60)).await;
             server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-            let mut request = [0; 24];
+            let mut request = [0; 34];
             server.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
             if !disconnect {
                 let mut b = [0];
                 assert_eq!(server.read(&mut b).await.unwrap(), 0);
@@ -315,8 +319,9 @@ async fn mixed_framebuffer_updates_cannot_confirm_a_resize() {
         let task = tokio::spawn(async move {
             handshake(&mut server, (80, 60)).await;
             server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-            let mut request = [0; 24];
+            let mut request = [0; 34];
             server.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
             let extended = single(1, 0, 160, 100);
             let mut raw = rect_header(
                 Rect {
@@ -453,8 +458,9 @@ async fn cursor_metadata_can_precede_or_follow_resize_confirmation() {
         let task = tokio::spawn(async move {
             handshake(&mut server, (80, 60)).await;
             server.write_all(&single(0, 0, 80, 60)).await.unwrap();
-            let mut request = [0; 24];
+            let mut request = [0; 34];
             server.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request[24..], &[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
             let mut cursor = rect_header(
                 Rect {
                     x: 0,

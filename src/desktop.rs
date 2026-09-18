@@ -159,6 +159,8 @@ pub enum ResizeError {
     Busy,
     #[error("resize denied: {0:?}")]
     Denied(DesktopStatus),
+    #[error("resize could not be dispatched before the deadline")]
+    DispatchTimeout,
     #[error("resize was not confirmed before the deadline; do not retry blindly")]
     Timeout,
     #[error("resize outcome is uncertain; reconnect and observe before retrying")]

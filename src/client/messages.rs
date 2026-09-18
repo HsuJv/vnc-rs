@@ -118,6 +118,9 @@ impl ClientMsg {
                     payload.extend_from_slice(&screen.height.to_be_bytes());
                     payload.extend_from_slice(&screen.flags.to_be_bytes());
                 }
+                // Some servers release resize confirmations only with an outstanding
+                // update request. Keep it ordered with the resize and bounded to one pixel.
+                payload.extend_from_slice(&[3, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
                 writer.write_all(&payload).await?;
                 Ok(())
             }
