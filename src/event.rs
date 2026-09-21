@@ -27,6 +27,20 @@ impl From<(u16, u16)> for Screen {
     }
 }
 
+/// One screen in an ExtendedDesktopSize layout
+///
+/// According to the [ExtendedDesktopSize pseudo-encoding](https://github.com/rfbproto/rfbproto/blob/master/rfbproto.rst#extendeddesktopsize-pseudo-encoding)
+///
+#[derive(Debug, Clone, Copy)]
+pub struct ScreenLayout {
+    pub id: u32,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub flags: u32,
+}
+
 type SrcRect = Rect;
 type DstRect = Rect;
 
@@ -48,6 +62,22 @@ pub enum VncEvent {
     /// If the [crate::VncEncoding::DesktopSizePseudo] is set
     ///
     SetResolution(Screen),
+    /// Will be generated if [crate::VncEncoding::ExtendedDesktopSizePseudo] is set
+    /// and the server supports it (servers announce support by sending one of
+    /// these immediately after SetEncodings, and use it INSTEAD of
+    /// [VncEvent::SetResolution] for all later size changes).
+    ///
+    /// `reason` 0 = server/administrative resize, 1 = this client's
+    /// SetDesktopSize request, 2 = another client's request.
+    /// `status` is only meaningful when `reason == 1`; non-zero means the
+    /// request failed and `screen`/`layout` must be ignored.
+    ///
+    ExtendedDesktopSize {
+        screen: Screen,
+        reason: u8,
+        status: u8,
+        layout: Vec<ScreenLayout>,
+    },
     /// If the connector doesn't call `set_pixel_format` method
     ///
     /// The engine will generate a [VncEvent::SetPixelFormat] to let the window know how to render image
@@ -138,6 +168,18 @@ pub enum X11Event {
     /// Forces the server to send the entire framebuffer, useful after
     /// CursorPseudo is negotiated to clear cursor ghosts from the framebuffer.
     FullRefresh,
+    /// Ask the server to change the desktop size (width, height).
+    ///
+    /// Requires [crate::VncEncoding::ExtendedDesktopSizePseudo] to be set AND
+    /// the server to have announced support (a
+    /// [VncEvent::ExtendedDesktopSize] was received) — sending it to a server
+    /// that doesn't support it is a protocol error and the server may close
+    /// the connection.
+    ///
+    /// The server answers with a [VncEvent::ExtendedDesktopSize] with
+    /// `reason == 1` carrying the result status.
+    ///
+    SetDesktopSize(u16, u16),
     /// Key down/up
     ///
     KeyEvent(ClientKeyEvent),
