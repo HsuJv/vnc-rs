@@ -1,5 +1,5 @@
 //! Negotiated desktop layout and resize results. Geometry is always server-confirmed.
-use crate::{Rect, VncError};
+use crate::{limits::dimensions, Rect, VncError};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,16 +203,4 @@ pub enum ResizeError {
     Uncertain,
     #[error("connection closed before resize could be dispatched")]
     Disconnected,
-}
-
-fn dimensions(width: u16, height: u16) -> Result<(), VncError> {
-    if width == 0
-        || height == 0
-        || width > 8192
-        || height > 8192
-        || u32::from(width) * u32::from(height) > 8_294_400
-    {
-        return Err(VncError::InvalidImageData);
-    }
-    Ok(())
 }

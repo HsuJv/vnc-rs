@@ -1,0 +1,22 @@
+[package]
+name = "vnc-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+vnc-rs = { path = ".." }
+tokio = { version = "1", features = ["rt", "time", "io-util"] }
+flate2 = "1"
+
+[[bin]]
+name = "protocol"
+path = "fuzz_targets/protocol.rs"
+test = false
+doc = false
+bench = false
