@@ -388,6 +388,10 @@ async fn last_rect_sentinel_bounds_actual_layouts_not_declared_count() {
 }
 
 pub(super) async fn handshake(server: &mut DuplexStream, size: (u16, u16)) {
+    handshake_named(server, size, "test").await;
+}
+
+pub(super) async fn handshake_named(server: &mut DuplexStream, size: (u16, u16), name: &str) {
     server.write_all(b"RFB 003.008\n").await.unwrap();
     let mut version = [0; 12];
     server.read_exact(&mut version).await.unwrap();
@@ -402,8 +406,8 @@ pub(super) async fn handshake(server: &mut DuplexStream, size: (u16, u16)) {
         .write_all(&Vec::<u8>::from(PixelFormat::rgba()))
         .await
         .unwrap();
-    server.write_u32(4).await.unwrap();
-    server.write_all(b"test").await.unwrap();
+    server.write_u32(name.len() as u32).await.unwrap();
+    server.write_all(name.as_bytes()).await.unwrap();
     let mut pixel_format = [0; 20];
     server.read_exact(&mut pixel_format).await.unwrap();
     assert_eq!(pixel_format[0], 0);
