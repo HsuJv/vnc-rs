@@ -13,7 +13,11 @@ use tokio_util::compat::*;
 use tracing::*;
 
 use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
-const CHANNEL_SIZE: usize = 2;
+const NETWORK_CHANNEL_SIZE: usize = 4096;
+const INPUT_CHANNEL_SIZE: usize = 4096;
+const OUTPUT_CHANNEL_SIZE: usize = 2;
+
+mod output;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -80,10 +84,10 @@ impl VncInner {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let (conn_ch_tx, conn_ch_rx) = channel(CHANNEL_SIZE);
-        let (input_ch_tx, input_ch_rx) = channel(CHANNEL_SIZE);
-        let (output_ch_tx, output_ch_rx) = channel(CHANNEL_SIZE);
-        let (decoding_stop_tx, decoding_stop_rx) = oneshot::channel();
+        let (conn_ch_tx, conn_ch_rx) = channel(NETWORK_CHANNEL_SIZE);
+        let (input_ch_tx, input_ch_rx) = channel(INPUT_CHANNEL_SIZE);
+        let (output_ch_tx, output_ch_rx) = channel(OUTPUT_CHANNEL_SIZE);
+        let (decoding_stop_tx, mut decoding_stop_rx) = oneshot::channel();
         let (net_conn_stop_tx, net_conn_stop_rx) = oneshot::channel();
 
         trace!("client init msg");
@@ -127,29 +131,19 @@ impl VncInner {
             };
 
             let pf = pixel_format.as_ref().unwrap();
-            if let Err(e) = asycn_vnc_read_loop(
+            let result = asycn_vnc_read_loop(
                 &mut conn_ch_rx,
                 pf,
                 &output_func,
-                decoding_stop_rx,
+                &mut decoding_stop_rx,
                 &encodings,
                 (width, height),
             )
-            .await
-            {
-                if let VncError::IoError(e) = e {
-                    if let std::io::ErrorKind::UnexpectedEof = e.kind() {
-                        // this should be a normal case when the network connection disconnects
-                        // and we just send an EOF over the inner bridge between the process thread and the decode thread
-                        // do nothing here
-                    } else {
-                        error!("Error occurs during the decoding {:?}", e);
-                        let _ = output_ch_tx.try_send(VncEvent::Error(e.to_string()));
-                    }
-                } else {
-                    error!("Error occurs during the decoding {:?}", e);
-                    let _ = output_ch_tx.try_send(VncEvent::Error(e.to_string()));
-                }
+            .await;
+            // Release the network worker before waiting for output capacity.
+            drop(conn_ch_rx);
+            if let Err(error) = result {
+                output::report_error(error, &output_ch_tx, &mut decoding_stop_rx).await;
             }
             trace!("Decoding thread stops");
         });
@@ -405,7 +399,7 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
-    stop_ch: oneshot::Receiver<()>,
+    stop_ch: &mut oneshot::Receiver<()>,
     encodings: &[VncEncoding],
     screen: (u16, u16),
 ) -> Result<(), VncError>
@@ -567,3 +561,6 @@ where
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod queue_tests;

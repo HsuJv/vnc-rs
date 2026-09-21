@@ -78,14 +78,14 @@ async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
     ] {
         let (mut client, mut server) = duplex(256);
         server.write_all(&payload).await.unwrap();
-        let (_stop, stopped) = oneshot::channel();
+        let (_stop, mut stopped) = oneshot::channel();
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             asycn_vnc_read_loop(
                 &mut client,
                 &PixelFormat::rgba(),
                 &|_| async { Ok(()) },
-                stopped,
+                &mut stopped,
                 &[
                     VncEncoding::Raw,
                     VncEncoding::CopyRect,
@@ -123,7 +123,7 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
     ));
     bytes.extend([1, 2, 3, 255]);
     let output = std::sync::Mutex::new(Vec::new());
-    let (_stop, stopped) = oneshot::channel();
+    let (_stop, mut stopped) = oneshot::channel();
     let result = asycn_vnc_read_loop(
         &mut bytes.as_slice(),
         &PixelFormat::rgba(),
@@ -131,7 +131,7 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
             output.lock().unwrap().push(event);
             async { Ok(()) }
         },
-        stopped,
+        &mut stopped,
         &[VncEncoding::DesktopSizePseudo],
         (64, 64),
     )
@@ -148,8 +148,8 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
 
 #[tokio::test]
 async fn shutdown_interrupts_a_full_event_queue() {
-    let (events, mut received) = channel(CHANNEL_SIZE);
-    for _ in 0..CHANNEL_SIZE {
+    let (events, mut received) = channel(OUTPUT_CHANNEL_SIZE);
+    for _ in 0..OUTPUT_CHANNEL_SIZE {
         events.try_send(VncEvent::Bell).unwrap();
     }
     let calls = std::cell::Cell::new(0);
@@ -157,7 +157,7 @@ async fn shutdown_interrupts_a_full_event_queue() {
         calls.set(calls.get() + 1);
         events.send(event)
     };
-    let (stop, stopped) = oneshot::channel();
+    let (stop, mut stopped) = oneshot::channel();
     let mut input = &[2_u8][..];
     let format = PixelFormat::rgba();
     let deliver = |event| {
@@ -167,7 +167,7 @@ async fn shutdown_interrupts_a_full_event_queue() {
             Ok(())
         }
     };
-    let task = asycn_vnc_read_loop(&mut input, &format, &deliver, stopped, &[], (1, 1));
+    let task = asycn_vnc_read_loop(&mut input, &format, &deliver, &mut stopped, &[], (1, 1));
     tokio::pin!(task);
     assert!(futures::poll!(task.as_mut()).is_pending());
     assert_eq!(calls.get(), 1);
@@ -177,7 +177,7 @@ async fn shutdown_interrupts_a_full_event_queue() {
         .await
         .unwrap()
         .unwrap();
-    for _ in 0..CHANNEL_SIZE {
+    for _ in 0..OUTPUT_CHANNEL_SIZE {
         assert!(matches!(received.try_recv(), Ok(VncEvent::Bell)));
     }
     assert!(received.try_recv().is_err());
@@ -187,9 +187,9 @@ async fn shutdown_interrupts_a_full_event_queue() {
 async fn full_bridge_resumes_without_unrelated_input_and_cancels_promptly() {
     for cancel in [false, true] {
         let (client, mut server) = duplex(1);
-        let (_input, input) = channel(CHANNEL_SIZE);
-        let (bridge, mut packets) = channel(CHANNEL_SIZE);
-        for _ in 0..CHANNEL_SIZE {
+        let (_input, input) = channel(INPUT_CHANNEL_SIZE);
+        let (bridge, mut packets) = channel(2);
+        for _ in 0..2 {
             bridge.try_send(Ok(vec![0])).unwrap();
         }
         let (stop, stopped) = oneshot::channel();
@@ -198,7 +198,7 @@ async fn full_bridge_resumes_without_unrelated_input_and_cancels_promptly() {
         tokio::pin!(task);
         assert!(futures::poll!(task.as_mut()).is_pending());
         // The network byte was consumed while every bridge slot remains occupied.
-        assert_eq!(packets.len(), CHANNEL_SIZE);
+        assert_eq!(packets.len(), 2);
         assert!(futures::poll!(Box::pin(server.write_all(&[8]))).is_ready());
         if !cancel {
             assert_eq!(packets.recv().await.unwrap().unwrap(), [0]);
@@ -219,8 +219,8 @@ async fn full_bridge_resumes_without_unrelated_input_and_cancels_promptly() {
 #[tokio::test]
 async fn shutdown_interrupts_a_blocked_socket_write() {
     let (client, mut server) = duplex(1);
-    let (input, input_rx) = channel(CHANNEL_SIZE);
-    let (bridge, _packets) = channel(CHANNEL_SIZE);
+    let (input, input_rx) = channel(INPUT_CHANNEL_SIZE);
+    let (bridge, _packets) = channel(NETWORK_CHANNEL_SIZE);
     let (stop, stopped) = oneshot::channel();
     input
         .send(ClientMsg::ClientCutText("test".into()))
@@ -229,7 +229,7 @@ async fn shutdown_interrupts_a_blocked_socket_write() {
     let task = async_connection_process_loop(client, input_rx, bridge, stopped);
     tokio::pin!(task);
     assert!(futures::poll!(task.as_mut()).is_pending());
-    assert_eq!(input.capacity(), CHANNEL_SIZE);
+    assert_eq!(input.capacity(), INPUT_CHANNEL_SIZE);
     assert_eq!(server.read_u8().await.unwrap(), 6); // first byte of ClientCutText
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(1), task)
@@ -242,8 +242,8 @@ async fn shutdown_interrupts_a_blocked_socket_write() {
 #[tokio::test]
 async fn decoder_exit_releases_an_idle_socket() {
     let (client, mut server) = duplex(1);
-    let (_input, input) = channel(CHANNEL_SIZE);
-    let (bridge, packets) = channel(CHANNEL_SIZE);
+    let (_input, input) = channel(INPUT_CHANNEL_SIZE);
+    let (bridge, packets) = channel(NETWORK_CHANNEL_SIZE);
     let (_stop, stopped) = oneshot::channel();
     let task = async_connection_process_loop(client, input, bridge, stopped);
     tokio::pin!(task);
@@ -258,13 +258,13 @@ async fn decoder_exit_releases_an_idle_socket() {
 
 #[tokio::test]
 async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
-    let (input_ch, mut input) = channel(CHANNEL_SIZE);
-    for _ in 0..CHANNEL_SIZE {
+    let (input_ch, mut input) = channel(INPUT_CHANNEL_SIZE);
+    for _ in 0..INPUT_CHANNEL_SIZE {
         input_ch
             .try_send(ClientMsg::ClientCutText(String::new()))
             .unwrap();
     }
-    let (_events, output_ch) = channel(CHANNEL_SIZE);
+    let (_events, output_ch) = channel(OUTPUT_CHANNEL_SIZE);
     let (network_stop, network_stopped) = oneshot::channel();
     let (decoder_stop, decoder_stopped) = oneshot::channel();
     let client = VncClient {
@@ -290,5 +290,5 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
     // Even if capacity becomes available during close, no stale input is queued.
     input.recv().await.unwrap();
     assert!(matches!(pending.await, Err(VncError::ClientNotRunning)));
-    assert_eq!(input.len(), CHANNEL_SIZE - 1);
+    assert_eq!(input.len(), INPUT_CHANNEL_SIZE - 1);
 }
