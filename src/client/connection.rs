@@ -1,7 +1,13 @@
 use futures::TryStreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
@@ -25,6 +31,7 @@ use tokio::spawn;
 use wasm_bindgen_futures::spawn_local as spawn;
 
 use super::messages::{ClientMsg, ServerMsg};
+use super::resize::DesktopState;
 
 struct ImageRect {
     rect: Rect,
@@ -62,9 +69,20 @@ impl ImageRect {
     }
 }
 
+/// The framebuffer size is shared between the decoder, which learns of resizes,
+/// and the input path, which sizes refresh requests; pack it into one atomic.
+fn pack_screen((width, height): (u16, u16)) -> u32 {
+    (u32::from(width) << 16) | u32::from(height)
+}
+
+fn unpack_screen(packed: u32) -> (u16, u16) {
+    ((packed >> 16) as u16, packed as u16)
+}
+
 struct VncInner {
     name: String,
-    screen: (u16, u16),
+    screen: Arc<AtomicU32>,
+    desktop: Arc<DesktopState>,
     input_ch: Sender<ClientMsg>,
     output_ch: Receiver<VncEvent>,
     decoding_stop: Option<oneshot::Sender<()>>,
@@ -101,6 +119,11 @@ impl VncInner {
             })
             .await?;
 
+        let screen = Arc::new(AtomicU32::new(pack_screen((width, height))));
+        let decoder_screen = Arc::clone(&screen);
+        let desktop = Arc::new(DesktopState::default());
+        let decoder_desktop = Arc::clone(&desktop);
+        let network_desktop = Arc::clone(&desktop);
         trace!("client encodings: {:?}", encodings);
         send_client_encoding(&mut stream, encodings.clone()).await?;
 
@@ -137,11 +160,14 @@ impl VncInner {
                 &output_func,
                 &mut decoding_stop_rx,
                 &encodings,
-                (width, height),
+                &decoder_screen,
+                &decoder_desktop,
             )
             .await;
-            // Release the network worker before waiting for output capacity.
+            // Release the network worker and fail any pending resize before waiting
+            // for output capacity.
             drop(conn_ch_rx);
+            decoder_desktop.close();
             if let Err(error) = result {
                 output::report_error(error, &output_ch_tx, &mut decoding_stop_rx).await;
             }
@@ -154,13 +180,15 @@ impl VncInner {
             let _ =
                 async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx)
                     .await;
+            network_desktop.close();
             trace!("Net Connection thread stops");
         });
 
         info!("VNC Client {name} starts");
         Ok(Self {
             name,
-            screen: (width, height),
+            screen,
+            desktop,
             input_ch: input_ch_tx,
             output_ch: output_ch_rx,
             decoding_stop: Some(decoding_stop_tx),
@@ -173,13 +201,14 @@ impl VncInner {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
+            let (width, height) = unpack_screen(self.screen.load(Ordering::Acquire));
             let msg = match event {
                 X11Event::Refresh => ClientMsg::FramebufferUpdateRequest(
                     Rect {
                         x: 0,
                         y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
+                        width,
+                        height,
                     },
                     1,
                 ),
@@ -187,8 +216,8 @@ impl VncInner {
                     Rect {
                         x: 0,
                         y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
+                        width,
+                        height,
                     },
                     0, // non-incremental: server sends entire framebuffer
                 ),
@@ -240,6 +269,7 @@ impl VncInner {
     /// Stop the VNC engine and release resources
     ///
     fn close(&mut self) -> Result<(), VncError> {
+        self.desktop.close();
         if self.net_conn_stop.is_some() {
             let net_conn_stop: oneshot::Sender<()> = self.net_conn_stop.take().unwrap();
             let _ = net_conn_stop.send(());
@@ -262,6 +292,8 @@ impl Drop for VncInner {
 
 pub struct VncClient {
     inner: Arc<Mutex<VncInner>>,
+    desktop: Arc<DesktopState>,
+    input_ch: Sender<ClientMsg>,
 }
 
 impl VncClient {
@@ -274,11 +306,32 @@ impl VncClient {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(
-                VncInner::new(stream, shared, pixel_format, encodings).await?,
-            )),
+            desktop: Arc::clone(&inner.desktop),
+            input_ch: inner.input_ch.clone(),
+            inner: Arc::new(Mutex::new(inner)),
         })
+    }
+
+    /// Last validated ExtendedDesktopSize layout; None means support is unconfirmed.
+    pub fn desktop_layout(&self) -> Option<crate::DesktopLayout> {
+        self.desktop.layout()
+    }
+
+    /// Request a negotiated single-screen resize and wait for the server result.
+    /// Available on native targets with a Tokio time driver; wasm supports observation only.
+    /// Continue draining events concurrently. Each queue/confirmation wait is bounded
+    /// to five seconds. Cancellation after dispatch makes later requests uncertain;
+    /// reconnect and observe before retrying. Dispatch includes one incremental one-pixel
+    /// update request so servers can deliver the confirmation.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn resize_desktop(
+        &self,
+        width: u16,
+        height: u16,
+    ) -> Result<crate::DesktopLayout, crate::ResizeError> {
+        self.desktop.request(&self.input_ch, width, height).await
     }
 
     /// Input a `X11Event` from the frontend
@@ -322,6 +375,8 @@ impl Clone for VncClient {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            desktop: Arc::clone(&self.desktop),
+            input_ch: self.input_ch.clone(),
         }
     }
 }
@@ -401,7 +456,8 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     output_func: &F,
     stop_ch: &mut oneshot::Receiver<()>,
     encodings: &[VncEncoding],
-    screen: (u16, u16),
+    screen: &AtomicU32,
+    desktop: &DesktopState,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -411,7 +467,7 @@ where
     tokio::select! {
         biased;
         _ = stop_ch => Ok(()),
-        result = read_vnc_messages(stream, pf, output_func, encodings, screen) => result,
+        result = read_vnc_messages(stream, pf, output_func, encodings, screen, desktop) => result,
     }
 }
 
@@ -420,7 +476,8 @@ async fn read_vnc_messages<S, F, Fut>(
     pf: &PixelFormat,
     output_func: &F,
     encodings: &[VncEncoding],
-    mut screen: (u16, u16),
+    shared_screen: &AtomicU32,
+    desktop: &DesktopState,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -432,6 +489,7 @@ where
     let mut tight_decoder = codec::TightDecoder::new();
     let mut trle_decoder = codec::TrleDecoder::new();
     let mut cursor = codec::CursorDecoder::new();
+    let mut screen = unpack_screen(shared_screen.load(Ordering::Acquire));
 
     // main decoding loop
     loop {
@@ -439,6 +497,8 @@ where
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
             ServerMsg::FramebufferUpdate(rect_num) => {
+                let mut updates = crate::desktop::UpdateBatch::default();
+                let mut framebuffer_changed = false;
                 for _ in 0..rect_num {
                     let rect = ImageRect::read(stream).await?;
                     if rect.encoding != VncEncoding::Raw && !encodings.contains(&rect.encoding) {
@@ -447,10 +507,22 @@ where
                     if !matches!(
                         rect.encoding,
                         VncEncoding::DesktopSizePseudo
+                            | VncEncoding::ExtendedDesktopSizePseudo
                             | VncEncoding::LastRectPseudo
                             | VncEncoding::CursorPseudo
                     ) {
                         crate::limits::rectangle(&rect.rect, screen)?;
+                    }
+                    if !matches!(
+                        rect.encoding,
+                        VncEncoding::CursorPseudo
+                            | VncEncoding::ExtendedDesktopSizePseudo
+                            | VncEncoding::LastRectPseudo
+                    ) {
+                        if !updates.is_empty() {
+                            return Err(VncError::InvalidImageData);
+                        }
+                        framebuffer_changed = true;
                     }
 
                     match rect.encoding {
@@ -486,12 +558,22 @@ where
                         VncEncoding::CursorPseudo => {
                             cursor.decode(pf, &rect.rect, stream, output_func).await?;
                         }
+                        VncEncoding::ExtendedDesktopSizePseudo => {
+                            // Confirm only after the entire message excludes framebuffer changes.
+                            // Cursor metadata may accompany desktop layout updates.
+                            if framebuffer_changed {
+                                return Err(VncError::InvalidImageData);
+                            }
+                            updates.push(crate::DesktopUpdate::read(stream, rect.rect).await?)?;
+                        }
                         VncEncoding::DesktopSizePseudo => {
                             crate::limits::dimensions(rect.rect.width, rect.rect.height)?;
                             if rect.rect.x != 0 || rect.rect.y != 0 {
                                 return Err(VncError::InvalidImageData);
                             }
                             screen = (rect.rect.width, rect.rect.height);
+                            shared_screen.store(pack_screen(screen), Ordering::Release);
+                            desktop.legacy_resize();
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
@@ -501,6 +583,14 @@ where
                             break;
                         }
                     }
+                }
+                for update in updates.into_updates() {
+                    if let Some(layout) = &update.layout {
+                        screen = (layout.width, layout.height);
+                        shared_screen.store(pack_screen(screen), Ordering::Release);
+                    }
+                    desktop.observe(&update);
+                    output_func(VncEvent::DesktopUpdate(update)).await?;
                 }
             }
             // SetColorMapEntries,
@@ -564,3 +654,6 @@ mod tests;
 
 #[cfg(test)]
 mod queue_tests;
+
+#[cfg(test)]
+mod resize_tests;

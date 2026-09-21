@@ -48,6 +48,9 @@ pub enum VncEvent {
     /// If the [crate::VncEncoding::DesktopSizePseudo] is set
     ///
     SetResolution(Screen),
+    /// Negotiated layout or resize result. Same-size updates preserve pixels.
+    /// Never answer this announcement with an unconditional full refresh.
+    DesktopUpdate(crate::DesktopUpdate),
     /// If the connector doesn't call `set_pixel_format` method
     ///
     /// The engine will generate a [VncEvent::SetPixelFormat] to let the window know how to render image

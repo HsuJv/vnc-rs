@@ -251,3 +251,9 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 dual licensed as above, without any additional terms or conditions.
+
+## Negotiated desktop resizing
+
+Native clients can negotiate `ExtendedDesktopSizePseudo`, inspect `desktop_layout()`, and explicitly call `resize_desktop(width, height)` while continuing to drain events. Requests require one advertised screen covering the desktop, preserve its identity and flags, and are bounded to five seconds each for queue capacity and confirmation. Cancellation, timeout or forwarded results require observation before retrying. Negotiated layouts are limited to 8192 pixels per side and 8,294,400 pixels total; a message may contain at most 16 layout updates, including LastRect-terminated messages.
+
+`DesktopUpdate` is distinct from legacy `SetResolution`: preserve pixels when dimensions are unchanged, and never answer each extended announcement with a full refresh. Resize requests are not available in wasm builds; layout observation remains supported.

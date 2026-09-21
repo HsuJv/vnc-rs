@@ -210,8 +210,10 @@
 pub mod client;
 mod codec;
 pub mod config;
+mod desktop;
 pub mod error;
 pub mod event;
+pub use desktop::*;
 
 pub use client::VncClient;
 pub use client::VncConnector;
