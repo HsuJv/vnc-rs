@@ -291,6 +291,7 @@ impl Drop for VncInner {
 }
 
 pub struct VncClient {
+    server_name: Arc<str>,
     inner: Arc<Mutex<VncInner>>,
     desktop: Arc<DesktopState>,
     input_ch: Sender<ClientMsg>,
@@ -308,10 +309,17 @@ impl VncClient {
     {
         let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
         Ok(Self {
+            server_name: Arc::from(inner.name.as_str()),
             desktop: Arc::clone(&inner.desktop),
             input_ch: inner.input_ch.clone(),
             inner: Arc::new(Mutex::new(inner)),
         })
+    }
+
+    /// Desktop name advertised during the initial server handshake.
+    /// This is a server-supplied label, not an authenticated machine identity.
+    pub fn server_name(&self) -> &str {
+        &self.server_name
     }
 
     /// Last validated ExtendedDesktopSize layout; None means support is unconfirmed.
@@ -374,6 +382,7 @@ impl VncClient {
 impl Clone for VncClient {
     fn clone(&self) -> Self {
         Self {
+            server_name: Arc::clone(&self.server_name),
             inner: self.inner.clone(),
             desktop: Arc::clone(&self.desktop),
             input_ch: self.input_ch.clone(),

@@ -281,6 +281,7 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
     let (decoder_stop, decoder_stopped) = oneshot::channel();
     let desktop = Arc::new(DesktopState::default());
     let client = VncClient {
+        server_name: Arc::from(""),
         desktop: Arc::clone(&desktop),
         input_ch: input_ch.clone(),
         inner: Arc::new(Mutex::new(VncInner {
@@ -307,4 +308,21 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
     input.recv().await.unwrap();
     assert!(matches!(pending.await, Err(VncError::ClientNotRunning)));
     assert_eq!(input.len(), INPUT_CHANNEL_SIZE - 1);
+}
+
+#[tokio::test]
+async fn server_name_survives_close_and_clone() {
+    for name in ["", "Test workstation ÆØÅ"] {
+        let (client_stream, mut server) = duplex(4096);
+        let server_task = tokio::spawn(async move {
+            super::resize_tests::handshake_named(&mut server, (2, 2), name).await;
+            server
+        });
+        let client = super::resize_tests::connect(client_stream).await;
+        let _server = server_task.await.unwrap();
+        assert_eq!(client.server_name(), name);
+        let clone = client.clone();
+        client.close().await.unwrap();
+        assert_eq!(clone.server_name(), name);
+    }
 }
