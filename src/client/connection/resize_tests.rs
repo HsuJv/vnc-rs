@@ -31,7 +31,7 @@ fn update(
     }
     bytes
 }
-fn single(reason: u16, status: u16, width: u16, height: u16) -> Vec<u8> {
+pub(super) fn single(reason: u16, status: u16, width: u16, height: u16) -> Vec<u8> {
     update(
         reason,
         status,
@@ -40,7 +40,7 @@ fn single(reason: u16, status: u16, width: u16, height: u16) -> Vec<u8> {
         &[(42, 0, 0, width, height, 0x8000_0001)],
     )
 }
-async fn extended(stream: tokio::io::DuplexStream) -> VncClient {
+pub(super) async fn extended(stream: tokio::io::DuplexStream) -> VncClient {
     crate::VncConnector::new(stream)
         .set_auth_method(async { Ok(String::new()) })
         .set_pixel_format(PixelFormat::rgba())

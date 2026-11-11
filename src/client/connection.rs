@@ -568,12 +568,26 @@ where
                             cursor.decode(pf, &rect.rect, stream, output_func).await?;
                         }
                         VncEncoding::ExtendedDesktopSizePseudo => {
-                            // Confirm only after the entire message excludes framebuffer changes.
-                            // Cursor metadata may accompany desktop layout updates.
-                            if framebuffer_changed {
-                                return Err(VncError::InvalidImageData);
+                            let update = crate::DesktopUpdate::read(stream, rect.rect).await?;
+                            if update.reason == crate::DesktopReason::ThisClient
+                                || !updates.is_empty()
+                            {
+                                // Client resize acknowledgements remain atomic: a malformed
+                                // or mixed batch must never confirm a pending mutation.
+                                if framebuffer_changed {
+                                    return Err(VncError::InvalidImageData);
+                                }
+                                updates.push(update)?;
+                            } else {
+                                // Servers such as wayvnc announce layout before pixels in
+                                // the same message. Apply geometry before decoding them.
+                                if let Some(layout) = &update.layout {
+                                    screen = (layout.width, layout.height);
+                                    shared_screen.store(pack_screen(screen), Ordering::Release);
+                                }
+                                desktop.observe(&update);
+                                output_func(VncEvent::DesktopUpdate(update)).await?;
                             }
-                            updates.push(crate::DesktopUpdate::read(stream, rect.rect).await?)?;
                         }
                         VncEncoding::DesktopSizePseudo => {
                             crate::limits::dimensions(rect.rect.width, rect.rect.height)?;
@@ -666,3 +680,6 @@ mod queue_tests;
 
 #[cfg(test)]
 mod resize_tests;
+
+#[cfg(test)]
+mod layout_order_tests;
