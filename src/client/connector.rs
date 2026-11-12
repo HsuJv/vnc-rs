@@ -43,7 +43,12 @@ where
                     {
                         // Apple reports 003.889 and supports the 3.7/3.8
                         // handshake, which is required to be offered the ARD
-                        // security type.
+                        // security type. Our ARD flow implements the 3.8
+                        // variant, so a lower client limit cannot be honoured
+                        // and is reported instead of being silently raised.
+                        if connector.rfb_version < VncVersion::RFB38 {
+                            return Err(VncError::ArdVersionConflict(connector.rfb_version));
+                        }
                         VncVersion::RFB38
                     } else if connector.rfb_version < server_version {
                         connector.rfb_version
@@ -331,6 +336,11 @@ where
     /// [VncError::ArdNotOffered] unless a legacy method could actually
     /// complete: an unauthenticated session, or VNC authentication with
     /// credentials supplied via [Self::set_auth_method].
+    ///
+    /// The ARD flow requires the 3.8 handshake. If [Self::set_version]
+    /// limited the client to an older version, the connection to an Apple
+    /// server fails with [VncError::ArdVersionConflict] instead of silently
+    /// raising that limit.
     pub fn set_ard_credentials(
         mut self,
         username: impl Into<String>,

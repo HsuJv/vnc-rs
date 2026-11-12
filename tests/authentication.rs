@@ -68,6 +68,38 @@ async fn ard_authentication_completes_with_the_38_handshake() {
 }
 
 #[tokio::test]
+async fn ard_with_a_lower_version_limit_is_rejected() {
+    for version in [VncVersion::RFB33, VncVersion::RFB37] {
+        let (client, mut server) = duplex(256);
+        let server_task = tokio::spawn(async move {
+            server.write_all(APPLE_VERSION).await.unwrap();
+            // The client reports the conflict before answering the greeting.
+            let mut sent = Vec::new();
+            server.read_to_end(&mut sent).await.unwrap();
+            assert!(sent.is_empty());
+        });
+        type UnusedAuth = std::future::Ready<Result<String, VncError>>;
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            VncConnector::<_, UnusedAuth>::new(client)
+                .set_ard_credentials("user", "pass")
+                .set_version(version)
+                .add_encoding(VncEncoding::Raw)
+                .build()
+                .unwrap()
+                .try_start(),
+        )
+        .await
+        .expect("version negotiation timed out");
+        assert!(matches!(
+            result,
+            Err(VncError::ArdVersionConflict(limit)) if limit == version
+        ));
+        server_task.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn missing_ard_support_is_reported() {
     let (client, mut server) = duplex(256);
     let server_task = tokio::spawn(async move {
