@@ -27,8 +27,6 @@ pub enum VncError {
     WrongServerMessage,
     #[error("Image data cannot be decoded correctly")]
     InvalidImageData,
-    #[error("VNC encoding type {0} is recognised but has no working decoder")]
-    UnsupportedEncoding(i32),
     #[error("The VNC client isn't started. Or it is already closed")]
     ClientNotRunning,
     #[error(transparent)]
