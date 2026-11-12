@@ -71,7 +71,9 @@ On the macOS server both authentication paths have been exercised: VNC authentic
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
-But without any idea, when I send setClientEncoding(TRLE) to the vnc server it response with raw rectangles without any encoding. So Trle encoding is not tested. But the trle decoding routine shall be right since it was split from zrle routine
+But without any idea, when I send setClientEncoding(TRLE) to the vnc server it response with raw rectangles without any encoding. RFB lets a server reply with any encoding it implements, so a server without TRLE just falls back and never exercises the decoder.
+
+The TRLE routine that was split from the ZRLE one follows ZRLE framing (64x64 tiles behind a 4-byte zlib length) rather than [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5), which defines 16x16 tiles and no length header, so it could only decode a real TRLE rectangle into wrong pixels. Requesting encoding type 15 now fails with `VncError::UnsupportedEncoding` instead of rendering that.
 
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
 
