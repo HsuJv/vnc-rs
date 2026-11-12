@@ -30,7 +30,7 @@ pub(super) fn encrypt_credentials(
     write_field(&mut block[FIELD_LEN..], password);
 
     let cipher = Aes128::new(GenericArray::from_slice(key));
-    for chunk in block.chunks_exact_mut(16) {
+    for chunk in block.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(GenericArray::from_mut_slice(chunk));
     }
     Ok(block)
@@ -61,7 +61,7 @@ mod tests {
         key: &[u8; 16],
     ) -> [u8; CREDENTIAL_BLOCK_LEN] {
         let cipher = Aes128::new(GenericArray::from_slice(key));
-        for chunk in block.chunks_exact_mut(16) {
+        for chunk in block.as_chunks_mut::<16>().0 {
             cipher.decrypt_block(GenericArray::from_mut_slice(chunk));
         }
         block

@@ -112,7 +112,7 @@ mod tests {
         let key = creds::session_key(&dh::to_fixed_be(&shared, key_len)?);
         let cipher = Aes128::new(GenericArray::from_slice(&key));
         let mut block = encrypted;
-        for chunk in block.chunks_exact_mut(16) {
+        for chunk in block.as_chunks_mut::<16>().0 {
             cipher.decrypt_block(GenericArray::from_mut_slice(chunk));
         }
 
