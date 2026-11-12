@@ -15,6 +15,8 @@ Can be used on both the OS and WASI.
 
 A simple X11 client usage can be found at [example](https://github.com/HsuJv/vnc-rs/blob/main/example/src/main.rs)
 
+A command line probe that talks Apple ARD to the built-in macOS server can be found at [ard_probe](https://github.com/HsuJv/vnc-rs/blob/main/example/src/bin/ard_probe.rs)
+
 A simple web assembly client can be found at [webvnc](https://github.com/HsuJv/webgateway/tree/main/webvnc/src)
 
 If you encounter any problems in use, Any [issues](https://github.com/HsuJv/vnc-rs/issues) or [pull requests](https://github.com/HsuJv/vnc-rs/pulls) are welcome.
@@ -29,8 +31,43 @@ Looking back [whitequark's rust vnc](https://github.com/whitequark/rust-vnc) and
 
 It is intended to be a more compatible vnc engine that can be built for both OS applications and Wasm applications. So I did my best to minimise dependencies. However, asynchrony is necessary for websocket processes and in the end I chose `tokio` over `async_std`, which makes it a bit incompatible.
 
+## Authentication
+
+The engine negotiates three RFB security types:
+
+| Type | Name | How to enable |
+| --- | --- | --- |
+| 1 | None | nothing to configure |
+| 2 | VNC authentication | `set_auth_method`, which supplies the server password |
+| 30 | Apple Remote Desktop | `set_ard_credentials(username, password)` with a macOS account |
+
+Against the built-in macOS Screen Sharing service, prefer ARD. The client
+answers Apple's `RFB 003.889` version with the 3.8 handshake, runs an ephemeral
+Diffie-Hellman exchange and sends the credentials in a single AES-128 encrypted
+block, so nobody needs to be logged into the Mac first — a machine locked at the
+login window still accepts the connection. VNC authentication only works when
+"VNC viewers may control screen with password" is enabled there, and macOS 10.7
+and later raise a login window that blocks unattended use.
+
+Like every other ARD implementation, only the credential block is encrypted;
+the desktop session after authentication is not. Apple's other security types
+(31 to 36) are not implemented.
+
+Two limits are visible from the API:
+
++ Both fields of the credential block are 64 bytes wide, so a username or
+  password longer than 63 bytes is truncated and a warning is logged.
++ ARD needs the 3.8 handshake. A client that `set_version` limited to an older
+  release fails with `VncError::ArdVersionConflict` when it meets an Apple
+  server, instead of having that limit raised silently.
+
+[ARD-VERIFICATION.md](ARD-VERIFICATION.md) records what was checked against a
+real Mac.
+
 ## Encodings
-I've only tried video streaming from tight vnc server on win10/ubuntu 20.04 and the built-in vnc server on macos 12.6 (with password login turned on)
+I've only tried video streaming from tight vnc server on win10/ubuntu 20.04 and the built-in vnc server on macos
+
+On the macOS server both authentication paths have been exercised: VNC authentication with "VNC viewers may control screen with password" enabled, and Apple ARD with it disabled, which also works while the Mac sits locked at the login window (see [ARD-VERIFICATION.md](ARD-VERIFICATION.md)).
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 

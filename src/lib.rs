@@ -3,6 +3,19 @@
 //! ## Description
 //! + An async implementation of VNC client side protocol
 //!
+//! ## Authentication
+//!
+//! + `None` (security type 1) and VNC authentication (type 2, through
+//!   [`crate::VncConnector::set_auth_method`]) work against any RFC 6143 server.
+//! + Apple Remote Desktop authentication (type 30, through
+//!   [`crate::VncConnector::set_ard_credentials`]) signs in with a macOS
+//!   account. Use it against the built-in Screen Sharing service when "VNC
+//!   viewers may control screen with password" is disabled: the server then
+//!   advertises only Apple types, of which 30 is the one this client
+//!   implements. It also works against a Mac that is still sitting at the login
+//!   window. As in other ARD implementations only the credential block is
+//!   encrypted; the session after authentication is not.
+//!
 //! ## Simple example
 //!
 //! ```no_run
