@@ -84,13 +84,15 @@ impl From<VncVersion> for &[u8; 12] {
 }
 
 impl VncVersion {
-    pub(crate) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
+    /// Read the server's 12-byte version string, returning both the parsed
+    /// version and the raw bytes (some servers report non-standard versions).
+    pub(crate) async fn read<S>(reader: &mut S) -> Result<(Self, [u8; 12]), VncError>
     where
         S: AsyncRead + Unpin,
     {
         let mut buffer = [0_u8; 12];
         reader.read_exact(&mut buffer).await?;
-        Ok(buffer.into())
+        Ok((VncVersion::from(buffer), buffer))
     }
 
     pub(crate) async fn write<S>(self, writer: &mut S) -> Result<(), VncError>

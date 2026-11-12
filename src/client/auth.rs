@@ -18,6 +18,7 @@ pub(super) enum SecurityType {
     GtkVncSasl = 20,
     Md5Hash = 21,
     ColinDeanXvp = 22,
+    AppleArd = 30,
 }
 
 impl TryFrom<u8> for SecurityType {
@@ -36,6 +37,7 @@ impl TryFrom<u8> for SecurityType {
             20 => Ok(Self::GtkVncSasl),
             21 => Ok(Self::Md5Hash),
             22 => Ok(Self::ColinDeanXvp),
+            30 => Ok(Self::AppleArd),
             invalid => Err(VncError::InvalidSecurityTyep(invalid)),
         }
     }

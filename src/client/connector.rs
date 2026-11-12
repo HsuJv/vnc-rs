@@ -1,6 +1,7 @@
 use super::{
     auth::{AuthHelper, AuthResult, SecurityType},
     connection::VncClient,
+    security::ard::{ArdCredentials, APPLE_RFB_VERSION},
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -31,16 +32,28 @@ where
             match self {
                 VncState::Handshake(mut connector) => {
                     // Read the rfbversion informed by the server
-                    let rfbversion = VncVersion::read(&mut connector.stream).await?;
+                    let (server_version, raw_version) =
+                        VncVersion::read(&mut connector.stream).await?;
                     trace!(
                         "Our version {:?}, server version {:?}",
                         connector.rfb_version,
-                        rfbversion
+                        server_version
                     );
-                    let rfbversion = if connector.rfb_version < rfbversion {
+                    let rfbversion = if connector.ard.is_some() && raw_version == *APPLE_RFB_VERSION
+                    {
+                        // Apple reports 003.889 and supports the 3.7/3.8
+                        // handshake, which is required to be offered the ARD
+                        // security type. Our ARD flow implements the 3.8
+                        // variant, so a lower client limit cannot be honoured
+                        // and is reported instead of being silently raised.
+                        if connector.rfb_version < VncVersion::RFB38 {
+                            return Err(VncError::ArdVersionConflict(connector.rfb_version));
+                        }
+                        VncVersion::RFB38
+                    } else if connector.rfb_version < server_version {
                         connector.rfb_version
                     } else {
-                        rfbversion
+                        server_version
                     };
 
                     // Record the negotiated rfbversion
@@ -55,6 +68,47 @@ where
 
                     if security_types.is_empty() {
                         return Err(VncError::ConnectError);
+                    }
+
+                    if let Some(credentials) = connector.ard.take() {
+                        if security_types.contains(&SecurityType::AppleArd) {
+                            SecurityType::write(&SecurityType::AppleArd, &mut connector.stream)
+                                .await?;
+                            let result = super::security::ard::authenticate(
+                                &mut connector.stream,
+                                &credentials,
+                            )
+                            .await?;
+                            if let AuthResult::Failed = result {
+                                // In 3.8 the server appends a reason string; it may
+                                // also just close the connection instead.
+                                let reason = crate::limits::string(
+                                    &mut connector.stream,
+                                    crate::limits::MAX_NAME,
+                                )
+                                .await
+                                .unwrap_or_else(|_| "connection closed".to_owned());
+                                return Err(VncError::ArdAuthFailed(reason));
+                            }
+                            info!("Apple ARD auth done, client connected");
+                            return Ok(VncState::Connected(
+                                VncClient::new(
+                                    connector.stream,
+                                    connector.allow_shared,
+                                    connector.pixel_format,
+                                    connector.encodings,
+                                )
+                                .await?,
+                            ));
+                        }
+                        // ARD is not on offer; only fall back to a legacy
+                        // method when one could actually complete.
+                        let can_fallback = security_types.contains(&SecurityType::None)
+                            || (security_types.contains(&SecurityType::VncAuth)
+                                && connector.auth_methond.is_some());
+                        if !can_fallback {
+                            return Err(VncError::ArdNotOffered);
+                        }
                     }
 
                     if security_types.contains(&SecurityType::None) {
@@ -175,6 +229,7 @@ where
 {
     stream: S,
     auth_methond: Option<F>,
+    ard: Option<ArdCredentials>,
     rfb_version: VncVersion,
     allow_shared: bool,
     pixel_format: Option<PixelFormat>,
@@ -217,6 +272,7 @@ where
         Self {
             stream,
             auth_methond: None,
+            ard: None,
             allow_shared: true,
             rfb_version: VncVersion::RFB38,
             pixel_format: None,
@@ -265,6 +321,35 @@ where
     ///
     pub fn set_auth_method(mut self, auth_callback: F) -> Self {
         self.auth_methond = Some(auth_callback);
+        self
+    }
+
+    /// Enable Apple Remote Desktop (RFB security type 30) authentication.
+    ///
+    /// When set, the client answers Apple's `RFB 003.889` version with the
+    /// 3.8 handshake so the server offers its security-type list, and signs
+    /// in with the macOS account `username` and `password` when type 30 is
+    /// available. This bypasses the login window that plain VNC
+    /// authentication shows on macOS 10.7 and later.
+    ///
+    /// When the server does not offer ARD the connection fails with
+    /// [VncError::ArdNotOffered] unless a legacy method could actually
+    /// complete: an unauthenticated session, or VNC authentication with
+    /// credentials supplied via [Self::set_auth_method].
+    ///
+    /// The ARD flow requires the 3.8 handshake. If [Self::set_version]
+    /// limited the client to an older version, the connection to an Apple
+    /// server fails with [VncError::ArdVersionConflict] instead of silently
+    /// raising that limit.
+    pub fn set_ard_credentials(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.ard = Some(ArdCredentials {
+            username: username.into(),
+            password: password.into(),
+        });
         self
     }
 
