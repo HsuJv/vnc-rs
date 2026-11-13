@@ -468,6 +468,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_stateful_tiles_preserve_reuse_state() {
+        let mut raw_after_fill = vec![1];
+        raw_after_fill.extend(RED);
+        raw_after_fill.push(0);
+        for _ in 0..16 {
+            raw_after_fill.extend([7, 8, 9]);
+        }
+        raw_after_fill.push(127);
+        let (result, pixels) = decode(&raw_after_fill, 48, 1).await;
+        assert!(result.is_ok());
+        let mut expected = repeat(&rgb(RED), 16);
+        expected.extend(repeat(&rgb([7, 8, 9]), 16));
+        expected.extend(repeat(&rgb(RED), 16));
+        assert_eq!(pixels, expected);
+
+        let mut plain_rle_after_palette = vec![2];
+        plain_rle_after_palette.extend(RED);
+        plain_rle_after_palette.extend(GREEN);
+        plain_rle_after_palette.extend([0xff, 0xff]);
+        plain_rle_after_palette.extend([128, 7, 8, 9, 15, 127, 0x80, 0x00]);
+        let (result, pixels) = decode(&plain_rle_after_palette, 48, 1).await;
+        assert!(result.is_ok());
+        let mut expected = repeat(&rgb(GREEN), 16);
+        expected.extend(repeat(&rgb([7, 8, 9]), 16));
+        expected.extend(repeat(&rgb(GREEN), 1));
+        expected.extend(repeat(&rgb(RED), 15));
+        assert_eq!(pixels, expected);
+
+        let mut palette_rle_after_palette = vec![2];
+        palette_rle_after_palette.extend(RED);
+        palette_rle_after_palette.extend(GREEN);
+        palette_rle_after_palette.extend([0xff, 0xff]);
+        palette_rle_after_palette.extend([129, 0x81, 15, 127, 0x80, 0x00]);
+        let (result, pixels) = decode(&palette_rle_after_palette, 48, 1).await;
+        assert!(result.is_ok());
+        let mut expected = repeat(&rgb(GREEN), 32);
+        expected.extend(repeat(&rgb(GREEN), 1));
+        expected.extend(repeat(&rgb(RED), 15));
+        assert_eq!(pixels, expected);
+    }
+
+    #[tokio::test]
     async fn malformed_subencodings_and_runs_return_errors() {
         for bytes in [
             vec![17_u8],                       // unused value

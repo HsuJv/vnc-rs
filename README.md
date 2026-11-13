@@ -108,16 +108,22 @@ On the macOS server both authentication paths have been exercised: VNC authentic
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
-Advertising TRLE does not make a server send it: RFB lets the server answer
-with any encoding it implements, and every server available for testing
-(x11vnc/libvncserver, UltraVNC, TigerVNC, QEMU, macOS Screen Sharing) has no
-type 15 encoder and falls back to Raw. The decoder was therefore verified
-offline: it follows [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5)
+Advertising TRLE does not make every server send it: RFB lets the server
+answer with any encoding it implements. The common servers available for
+testing here (x11vnc/libvncserver, UltraVNC, TigerVNC, QEMU and macOS Screen
+Sharing) do not have a type 15 encoder and fall back to Raw. A small, current
+exception is [MiniVNC](https://github.com/marciot/mac-minivnc), a server for
+vintage Macintosh systems whose source contains a type 15 encoder and writes
+that value into framebuffer-update rectangles. MiniVNC requires a 68k/System 7
+environment, so its interoperability has not been run here.
+
+The decoder follows [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5)
 (16x16 tiles, one subencoding byte per tile, palette and mode remembered
 within a rectangle), unit tests cover every subencoding, and it was
 cross-checked pixel for pixel against libvncserver's TRLE decoder over 147
-generated rectangles. No TRLE-emitting server was available, so the path has
-not been exercised on a live connection.
+generated rectangles. A TCP loopback integration test also exercises the
+client's SetEncodings, framebuffer-update and RawImage path; it is not a
+substitute for a live MiniVNC run.
 
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
 
