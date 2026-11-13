@@ -42,6 +42,7 @@ TCP loopback 集成测试覆盖客户端链路。
    - `VNCEncodeTRLE.cpp` 实现实际 tile 编码。
    这是源码级确认，不等于本仓库已经完成真实 MiniVNC 互操作；当前环境没有 68k/System 7
    运行环境。
+
 顺带记一条与本仓库无关但有用的事实：UltraVNC 的 ini 里 `passwd=04569284227440C90F`
 这种 18 位十六进制是 `WritePrivateProfileStruct` 写的 8 字节 DES 结果加校验字节，
 DES key 是 VNC 固定的 `{23,82,107,6,35,78,88,7}`；`createpassword.exe <密码>` 只接受
@@ -89,7 +90,7 @@ DES key 是 VNC 固定的 `{23,82,107,6,35,78,88,7}`；`createpassword.exe <密�
 
 - **已实现**：`src/codec/trle.rs` 全部分支（0 / 1 / 2..16 / 127 / 128 / 129 /
   130..255），9 个单元测试通过；另有 1 个 TCP loopback integration test；`cargo fmt`、
-  clippy、`cargo test` 全绿（预计 59 unit / 7 integration / 2 doc）。
+  clippy、`cargo test` 全绿（59 unit / 7 integration / 2 doc）。
 - **已交叉验证**（2026-11-13，WSL Ubuntu + gcc）：把 libvncserver 的 `trle.c` 原样
   编成预言机（`BPP 32` / `REALBPP 32`，CPIXEL 4 字节），另写一个独立的 Python TRLE
   编码器产出 147 个用例（139 正例 + 8 反例），覆盖全部 subencoding、16x16 边界裁剪、
@@ -98,8 +99,8 @@ DES key 是 VNC 固定的 `{23,82,107,6,35,78,88,7}`；`createpassword.exe <密�
   - 本仓库解码器 vs libvncserver：**146/147**
   - libvncserver vs 编码器真值：146/147
 
-  唯一分歧是 `run-longer-than-tile`，即上面的有意加固，不是缺陷。8 个反例本仓库全部
-  正确拒绝。
+  唯一分歧是 `run-longer-than-tile`，即文末「与参考实现的有意差异」第 1 条，不是缺陷。
+  8 个反例本仓库全部正确拒绝。
 - **已做客户端链路验证**：`tests/trle.rs` 在 loopback TCP 上完成握手、通告 type 15、
   发送 TRLE rectangle 并收到 `RawImage`。
 - **尚未真实上机**：MiniVNC 源码已确认会把 15 写入 framebuffer-update rectangle，但
@@ -107,7 +108,8 @@ DES key 是 VNC 固定的 `{23,82,107,6,35,78,88,7}`；`createpassword.exe <密�
 
 ### 复现方法
 
-脚本都在 `C:\Users\michael\AppData\Local\Temp\trle_probe`（仓库外）：
+脚本都在 `C:\Users\michael\AppData\Local\Temp\trle_probe`（仓库外，Windows 机器；
+当前 Linux 工作机上没有这套脚本，交叉验证无法就地复跑）：
 
 1. `python gen_corpus.py cases.json cases.tsv` —— 独立编码器产出字节流与真值像素。
 2. `gcc -O2 -o oracle oracle.c`（在 WSL 里，`oracle.c` 直接 `#include "ref_trle.c"`，
@@ -135,7 +137,8 @@ DES key 是 VNC 固定的 `{23,82,107,6,35,78,88,7}`；`createpassword.exe <密�
   `src/client/connection.rs` 会拒掉任何不在通告列表里的编码，Raw 除外。
 - fuzz 目标仍然会请求 `VncEncoding::Trle`（`fuzz/fuzz_targets/protocol.rs`），现在
   打到的是真解码路径。
-- README 的 Encodings 一节已经改成「按 §7.7.5 重写、有单元测试、未经真机验证」。
+- README 的 Encodings 一节已经改成「按 §7.7.5 实现、有单元测试与 TCP loopback
+  测试、尚未在真实 MiniVNC 上验证」。
 - 一次性探针留在 `C:\Users\michael\AppData\Local\Temp\trle_probe`（仓库外，只通告
   type 15、不发任何键鼠事件）；抓包文件已删，里面只有一段失败的认证握手、没有画面。
 - 本机 UltraVNC 未做任何改动：ini 未写、winvnc 未重启、密码未设。

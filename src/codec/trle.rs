@@ -3,7 +3,6 @@ use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 const TILE: u16 = 16;
-const MAX_PALETTE: usize = 128;
 
 /// RFC 6143 section 7.7.5 remembers the palette, the solid colour and the
 /// previous subencoding per rectangle, so this state is rebuilt on every
@@ -314,9 +313,6 @@ impl Decoder {
                     }
                     130..=255 => {
                         let entries = usize::from(subencoding - 128);
-                        if entries > MAX_PALETTE {
-                            return Err(VncError::InvalidImageData);
-                        }
                         state.palette =
                             read_palette(input, entries, compressed_bpp, bpp, alpha_at_first)
                                 .await?;

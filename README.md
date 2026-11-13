@@ -109,9 +109,9 @@ On the macOS server both authentication paths have been exercised: VNC authentic
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
 Advertising TRLE does not make every server send it: RFB lets the server
-answer with any encoding it implements. The common servers available for
-testing here (x11vnc/libvncserver, UltraVNC, TigerVNC, QEMU and macOS Screen
-Sharing) do not have a type 15 encoder and fall back to Raw. A small, current
+answer with any encoding it implements. The servers checked here
+(x11vnc/libvncserver, UltraVNC, TigerVNC and QEMU) have no type 15 encoder, and
+macOS Screen Sharing answered with Raw in our tests. A small, current
 exception is [MiniVNC](https://github.com/marciot/mac-minivnc), a server for
 vintage Macintosh systems whose source contains a type 15 encoder and writes
 that value into framebuffer-update rectangles. MiniVNC requires a 68k/System 7
