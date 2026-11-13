@@ -61,19 +61,63 @@ Two limits are visible from the API:
   release fails with `VncError::ArdVersionConflict` when it meets an Apple
   server, instead of having that limit raised silently.
 
-[ARD-VERIFICATION.md](ARD-VERIFICATION.md) records what was checked against a
-real Mac.
+### Verified against a real Mac
+
+Protocol logic is covered by the fake-server tests (`cargo test`). The
+interoperability check below was run on 2026-11-11 against the built-in macOS
+Screen Sharing service (2880x1800 desktop, same subnet, Screen Sharing enabled,
+the account allowed to use it, the Mac kept awake, and "VNC viewers may control
+screen with password" left unchecked so the server offers only Apple types).
+
+```bash
+# what the server offers: expect "RFB 003.889" and a 30 in the list
+cargo run --manifest-path example/Cargo.toml --bin ard_probe -- <mac-ip>
+
+# full ARD login, with the short account name printed by `id -un` on the Mac
+cargo run --manifest-path example/Cargo.toml --bin ard_probe -- <mac-ip> --connect <username> '<password>'
+```
+
+| Check | Result |
+| --- | --- |
+| Security types | pass — `RFB 003.889`, only 30/31/32/33/35/36 offered, no type 2 |
+| Correct credentials | pass — authentication 749 ms, first frame at 1.63 s |
+| Wrong password | pass — `ARD authentication failed: Authentication or authorization failure`, exit 1, no hang |
+| Locked at the login window | pass — authenticates and delivers a frame with nobody logged in and no local approval |
+| Fallback (VNC password option set) | pass — type 2 and 30 both offered, the client still prefers 30 |
+
+When a run does not match, start here:
+
++ Only `2 (VNC auth)` is offered — the "VNC viewers may control screen with
+  password" checkbox is set; clear it to test ARD.
++ A version string other than `003.889` — the peer is not the built-in macOS
+  service on port 5900.
++ `ArdAuthFailed` with a password you know is right — the account is not allowed
+  in the Screen Sharing list.
++ After `close()` the decoder logs one `General("Channel closed")` error; it is
+  harmless and does not change the exit status.
+
+`-vv` traces can contain sensitive data, so redact them before reporting and
+never include the password. If none of the notes above explains a failing run,
+open an issue with the macOS version, the full output of the probe command and
+the `-vv` output of the failing step.
 
 ## Encodings
 I've only tried video streaming from tight vnc server on win10/ubuntu 20.04 and the built-in vnc server on macos
 
-On the macOS server both authentication paths have been exercised: VNC authentication with "VNC viewers may control screen with password" enabled, and Apple ARD with it disabled, which also works while the Mac sits locked at the login window (see [ARD-VERIFICATION.md](ARD-VERIFICATION.md)).
+On the macOS server both authentication paths have been exercised: VNC authentication with "VNC viewers may control screen with password" enabled, and Apple ARD with it disabled, which also works while the Mac sits locked at the login window (see Verified against a real Mac above).
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
-But without any idea, when I send setClientEncoding(TRLE) to the vnc server it response with raw rectangles without any encoding. RFB lets a server reply with any encoding it implements, so a server without TRLE just falls back and never exercises the decoder.
-
-The TRLE routine that was split from the ZRLE one followed ZRLE framing (64x64 tiles behind a 4-byte zlib length) rather than [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5), which defines 16x16 tiles and no length header, so a real TRLE rectangle could only be decoded into wrong pixels. The decoder now follows that section: 16x16 tiles, one subencoding byte per tile, and the palette, solid colour and run mode remembered across the tiles of one rectangle. Unit tests cover every subencoding including the two reuse cases, and the decoder was cross-checked pixel for pixel against libvncserver's TRLE decoder over 147 generated rectangles. No server that emits type 15 was available, so the path has not been exercised on a live connection.
+Advertising TRLE does not make a server send it: RFB lets the server answer
+with any encoding it implements, and every server available for testing
+(x11vnc/libvncserver, UltraVNC, TigerVNC, QEMU, macOS Screen Sharing) has no
+type 15 encoder and falls back to Raw. The decoder was therefore verified
+offline: it follows [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5)
+(16x16 tiles, one subencoding byte per tile, palette and mode remembered
+within a rectangle), unit tests cover every subencoding, and it was
+cross-checked pixel for pixel against libvncserver's TRLE decoder over 147
+generated rectangles. No TRLE-emitting server was available, so the path has
+not been exercised on a live connection.
 
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
 
