@@ -108,24 +108,88 @@ On the macOS server both authentication paths have been exercised: VNC authentic
 
 Tight encoding, Zrle encoding & Raw encoding all work fine.
 
-Advertising TRLE does not make every server send it: RFB lets the server
-answer with any encoding it implements. The servers checked here
-(x11vnc/libvncserver, UltraVNC, TigerVNC and QEMU) have no type 15 encoder, and
-macOS Screen Sharing answered with Raw in our tests. A small, current
-exception is [MiniVNC](https://github.com/marciot/mac-minivnc), a server for
-vintage Macintosh systems whose source contains a type 15 encoder and writes
-that value into framebuffer-update rectangles. MiniVNC requires a 68k/System 7
-environment, so its interoperability has not been run here.
-
-The decoder follows [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5)
-(16x16 tiles, one subencoding byte per tile, palette and mode remembered
-within a rectangle), unit tests cover every subencoding, and it was
-cross-checked pixel for pixel against libvncserver's TRLE decoder over 147
-generated rectangles. A TCP loopback integration test also exercises the
-client's SetEncodings, framebuffer-update and RawImage path; it is not a
-substitute for a live MiniVNC run.
-
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
+
+### TRLE (encoding type 15)
+
+The decoder follows [RFC 6143 section 7.7.5](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.5):
+16x16 tiles, one subencoding byte per tile, no length header and no inflate,
+with the palette, solid colour and reuse mode remembered across the tiles of
+one rectangle and reset at the next rectangle — that is what the reference
+decoder `libvncclient/trle.c` does, and it matches the RFC's "the previous
+tile" wording. Malformed input (an unused subencoding, an out-of-range palette
+index, a truncated stream, a run longer than the pixels left in the tile)
+returns an error rather than guessing; the offending tile emits nothing, though
+tiles already delivered earlier in the same rectangle are not rolled back.
+
+Three differences from the reference decoder are deliberate: a run that
+overruns the tile is an error instead of a `possible TRLE corruption` warning,
+subencoding 129 without a known palette is an error instead of reading
+uninitialised memory, and everything else — tile size, the subencoding table,
+the `& 0x7f` mapping when 127 reuses a 130-and-up mode, and the quirk that
+subencoding 0, 128 and 129 leave the remembered mode unchanged — matches it.
+
+**Verified**
+
++ 9 unit tests in `src/codec/trle.rs` cover every subencoding, tile clipping,
+  palette reuse and the malformed branches, including that raw, plain RLE and
+  palette RLE tiles leave the reuse state untouched.
++ `tests/trle.rs` runs over a real TCP loopback: handshake, `SetEncodings`
+  advertising type 15, a type-15 rectangle, and the resulting `RawImage`.
++ Cross-checked against `libvncclient/trle.c` compiled as an independent oracle
+  over 147 generated rectangles (139 valid, 8 malformed): our decoder against
+  the encoder's ground truth 147/147, against the oracle 146/147 — the single
+  difference is the intentional run-length bound above. Two traps when
+  reproducing this: the palette-RLE subencoding is `128 + k`, because the
+  reference derives the palette length as `type - 128`; and multi-tile
+  rectangles must be compared at tile coordinates, since concatenating tiles
+  in order gives a different pixel arrangement. The generator lives outside the
+  repository on another machine, so this check is not reproducible from a fresh
+  clone.
++ The oracle only understands 4-byte CPIXELs, so it cannot cover the 3-byte
+  CPIXEL case RFC 6143 defines for 32bpp formats of depth 24 or less; that path
+  rests on our own unit tests.
+
+**Who actually sends type 15**
+
+Advertising the encoding does not make a server use it: RFB lets the server
+answer with any encoding it implements. Checked at source level, none of the
+common servers has a type 15 encoder — libvncserver ships a client decoder only
+(its README support table and the "Added a TRLE decoder" NEWS entry both say
+so), UltraVNC 1.8.x has no type 15 definition and no such encoder, TigerVNC and
+QEMU have none either, and the GPL RealVNC 4.0 and 4.1 `encodings.h` lists
+Raw, CopyRect, RRE, CoRRE, Hextile and ZRLE but not TRLE. macOS Screen Sharing
+answered with Raw in our tests. RFC 6143's statement that "current servers use
+the ZRLE, TRLE, and CopyRect encodings" matches none of these trees.
+
+The one confirmed server-side implementation is
+[MiniVNC](https://github.com/marciot/mac-minivnc), a VNC server for 68k
+Macintosh machines: `mTRLEEncoding = 15` is selected when the client advertises
+it, the tile bytes come from `VNCEncodeTRLE.cpp`, and `VNCServer.cpp` writes
+that encoding value into the framebuffer-update rectangle header.
+`cargo run --manifest-path example/Cargo.toml --bin trle_probe -- <host>`
+advertises type 15 only, so the answer is unambiguous: either the server sends
+TRLE rectangles and each one decodes, or the library rejects the encoding it
+never offered.
+
+**Not verified**
+
++ No live MiniVNC run. It needs a 68k Mac ROM and a System 7 disk with MacTCP,
+  neither of which is redistributable; Basilisk II itself is packaged in
+  Ubuntu's multiverse and can use its built-in slirp with port forwarding, so
+  no root is required once those two files exist.
++ Porting MiniVNC's encoder to Linux for a byte-level comparison does not work.
+  The shipped build uses its 68k assembly tile routines; the "portable C"
+  fallback in `VNCEncodeTilesC.cpp` has never been compiled — it does not build
+  (`*src32++` increments a cast rvalue in nine places, `nativeToRle` uses an
+  undeclared `rmask`, and two `goto`s jump over initialised locals) — and once
+  those are repaired it still runs past its scratch buffer. Its output would
+  not represent a real MiniVNC stream, so the live run is the only meaningful
+  third-party check left.
++ Whether MiniVNC handles width-clipped tiles correctly is open: its native
+  fast path sizes packed rows without per-row padding, which RFC 6143 requires
+  when a tile's width is not a multiple of 8, 4 or 2 pixels. Only the live run
+  can settle it.
 
 ## Decoder limits
 
