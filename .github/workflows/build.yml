@@ -26,7 +26,7 @@ jobs:
       - name: Install Clippy
         run: rustup component add clippy
       - name: Clippy (no features enabled)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --no-default-features -- -D warnings
       - name: Clippy (all features enabled)
         run: cargo clippy --all-features -- -D warnings
 
@@ -36,9 +36,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Build Linux (no features enabled)
-        run: cargo build --verbose
+        run: cargo build --no-default-features --verbose
       - name: Build Linux (all features enabled)
         run: cargo build --verbose --all-features
+      - name: Check individual features
+        run: |
+          for feature in auth-ard auth-vnc encoding-tight encoding-zrle encoding-trle cursor desktop-resize; do
+            cargo check --no-default-features --features "$feature"
+          done
   
   build-wasm32:
     name: Build check for wasm32
@@ -48,9 +53,14 @@ jobs:
       - name: Add wasm32
         run: rustup target add wasm32-unknown-unknown
       - name: Build wasm32 (no features enabled)
-        run: cargo build --target wasm32-unknown-unknown --verbose
+        run: cargo build --target wasm32-unknown-unknown --no-default-features --verbose
       - name: Build wasm32 (all features enabled)
         run: cargo build --target wasm32-unknown-unknown --verbose --all-features
+      - name: Check individual wasm32 features
+        run: |
+          for feature in auth-ard auth-vnc encoding-tight encoding-zrle encoding-trle cursor desktop-resize; do
+            cargo check --target wasm32-unknown-unknown --no-default-features --features "$feature"
+          done
 
   build-windows:
     name: Build check on windows
@@ -58,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Build Windows (no features enabled)
-        run: cargo build --verbose
+        run: cargo build --no-default-features --verbose
       - name: Build Windows (all features enabled)
         run: cargo build --verbose --all-features
 

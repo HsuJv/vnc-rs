@@ -7,4 +7,5 @@ mod security;
 pub use connection::VncClient;
 pub use connector::VncConnector;
 
+#[cfg(feature = "desktop-resize")]
 mod resize;

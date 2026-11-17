@@ -3,6 +3,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub(crate) const MAX_PIXELS: usize = 8_294_400;
 pub(crate) const MAX_DIMENSION: u16 = 8192;
+#[cfg(any(feature = "encoding-zrle", feature = "encoding-trle"))]
 pub(crate) const MAX_COMPRESSED: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_TEXT: usize = 1024 * 1024;
 pub(crate) const MAX_NAME: usize = 4096;

@@ -38,6 +38,49 @@ But without any idea, when I send setClientEncoding(TRLE) to the vnc server it r
 
 According to the RFC, the [Hextile Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.4) and [RRE Encoding](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.7.3) are both obsolescent, so I didn't try to implement them.
 
+## Cargo features
+
+The default feature set preserves all supported authentication mechanisms,
+encodings and extensions. Disable defaults to select only the required protocol
+capabilities:
+
+```toml
+vnc-rs = { version = "0.6", default-features = false, features = ["auth-vnc", "encoding-zrle"] }
+```
+
+| Feature | Capability and optional dependencies |
+| --- | --- |
+| `auth-vnc` | Classic password authentication and DES; enables `set_auth_method` |
+| `auth-ard` | Apple Remote Desktop authentication and `set_ard_credentials`; enables `num-bigint`, `md-5`, `aes`, and `getrandom` (with its JS backend on wasm32) |
+| `encoding-tight` | Tight decoding, including passing JPEG bytes to the renderer; enables `flate2` |
+| `encoding-zrle` | ZRLE decoding; enables `flate2` |
+| `encoding-trle` | TRLE decoding |
+| `cursor` | Cursor pseudo-encoding and cursor events |
+| `desktop-resize` | ExtendedDesktopSize layout observation and events; native resize requests with Tokio timeouts |
+
+Without default features, Raw, CopyRect, DesktopSize, LastRect, keyboard/pointer
+input, clipboard messages, Bell and unauthenticated RFB negotiation remain
+available. Authentication features make mechanisms available; they do not change
+negotiation priority or require the server to use authentication. All protocol
+limits and connection/shutdown checks remain enabled.
+
+Disabled encodings have no `VncEncoding` variant, decoder or dispatch branch.
+Referring to such a variant is a compile error. Incoming unknown or disabled
+encoding numbers are rejected; `VncEncoding::try_from(u32)` is fallible and never
+substitutes Raw. This replaces the former infallible `From<u32>` conversion.
+Related optional event variants and desktop-layout types/APIs are gated too.
+
+A client using only unauthenticated RFB, or ARD without VNC password fallback,
+can call `VncConnector::new(stream)` without supplying a dummy password callback.
+`set_auth_method` accepts its callback future and returns a builder parameterized
+by that future type.
+
+The library enables only Tokio I/O, synchronization, macros and runtime support;
+it does not require Tokio networking or filesystem support. Applications supply
+their own stream. `desktop-resize` additionally enables `tokio/time`, including
+on wasm32 where only layout observation is available. Examples and tests enable
+additional Tokio features separately.
+
 ## Decoder limits
 
 Connections reject framebuffers exceeding 8,294,400 pixels or 8192 pixels on
@@ -254,6 +297,6 @@ dual licensed as above, without any additional terms or conditions.
 
 ## Negotiated desktop resizing
 
-Native clients can negotiate `ExtendedDesktopSizePseudo`, inspect `desktop_layout()`, and explicitly call `resize_desktop(width, height)` while continuing to drain events. Requests require one advertised screen covering the desktop, preserve its identity and flags, and are bounded to five seconds each for queue capacity and confirmation. Cancellation, timeout or forwarded results require observation before retrying. Negotiated layouts are limited to 8192 pixels per side and 8,294,400 pixels total; a message may contain at most 16 layout updates, including LastRect-terminated messages.
+With `desktop-resize`, native clients can negotiate `ExtendedDesktopSizePseudo`, inspect `desktop_layout()`, and explicitly call `resize_desktop(width, height)` while continuing to drain events. Requests require one advertised screen covering the desktop, preserve its identity and flags, and are bounded to five seconds each for queue capacity and confirmation. Cancellation, timeout or forwarded results require observation before retrying. Negotiated layouts are limited to 8192 pixels per side and 8,294,400 pixels total; a message may contain at most 16 layout updates, including LastRect-terminated messages.
 
 `DesktopUpdate` is distinct from legacy `SetResolution`: preserve pixels when dimensions are unchanged, and never answer each extended announcement with a full refresh. Resize requests are not available in wasm builds; layout observation remains supported.

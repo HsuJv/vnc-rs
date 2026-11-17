@@ -1,3 +1,4 @@
+#[cfg(feature = "auth-vnc")]
 use super::security;
 use crate::{VncError, VncVersion};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -130,11 +131,13 @@ impl From<AuthResult> for u32 {
     }
 }
 
+#[cfg(feature = "auth-vnc")]
 pub(super) struct AuthHelper {
     challenge: [u8; 16],
     key: [u8; 8],
 }
 
+#[cfg(feature = "auth-vnc")]
 impl AuthHelper {
     pub(super) async fn read<S>(reader: &mut S, credential: &str) -> Result<Self, VncError>
     where
@@ -179,7 +182,7 @@ impl AuthHelper {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "auth-vnc"))]
 mod tests {
     use super::*;
 

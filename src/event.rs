@@ -50,6 +50,7 @@ pub enum VncEvent {
     SetResolution(Screen),
     /// Negotiated layout or resize result. Same-size updates preserve pixels.
     /// Never answer this announcement with an unconditional full refresh.
+    #[cfg(feature = "desktop-resize")]
     DesktopUpdate(crate::DesktopUpdate),
     /// If the connector doesn't call `set_pixel_format` method
     ///
@@ -66,6 +67,7 @@ pub enum VncEvent {
     ///
     /// Encoding the bytes with base64 and render it with "<img src=data:image/jpeg;base64,.../>",
     ///
+    #[cfg(feature = "encoding-tight")]
     JpegImage(Rect, ImageData),
 
     // PngImage(Rect, ImageData),
@@ -73,6 +75,7 @@ pub enum VncEvent {
     ///
     /// According to [RFC6143, section-7.8.1](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.8.1)
     ///
+    #[cfg(feature = "cursor")]
     SetCursor(Rect, ImageData),
     /// Just ring a bell
     ///

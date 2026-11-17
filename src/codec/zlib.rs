@@ -49,6 +49,7 @@ impl<'a> ZlibReader<'a> {
         }
     }
 
+    #[cfg(feature = "encoding-zrle")]
     pub fn read_u8(&mut self) -> std::io::Result<u8> {
         let mut buf = [0; 1];
         self.read_exact(&mut buf)?;

@@ -1,7 +1,10 @@
+#[cfg(feature = "auth-vnc")]
+use super::auth::AuthHelper;
+#[cfg(feature = "auth-ard")]
+use super::security::ard::{ArdCredentials, APPLE_RFB_VERSION};
 use super::{
-    auth::{AuthHelper, AuthResult, SecurityType},
+    auth::{AuthResult, SecurityType},
     connection::VncClient,
-    security::ard::{ArdCredentials, APPLE_RFB_VERSION},
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -32,29 +35,33 @@ where
             match self {
                 VncState::Handshake(mut connector) => {
                     // Read the rfbversion informed by the server
-                    let (server_version, raw_version) =
+                    let (server_version, _raw_version) =
                         VncVersion::read(&mut connector.stream).await?;
                     trace!(
                         "Our version {:?}, server version {:?}",
                         connector.rfb_version,
                         server_version
                     );
-                    let rfbversion = if connector.ard.is_some() && raw_version == *APPLE_RFB_VERSION
-                    {
-                        // Apple reports 003.889 and supports the 3.7/3.8
-                        // handshake, which is required to be offered the ARD
-                        // security type. Our ARD flow implements the 3.8
-                        // variant, so a lower client limit cannot be honoured
-                        // and is reported instead of being silently raised.
-                        if connector.rfb_version < VncVersion::RFB38 {
-                            return Err(VncError::ArdVersionConflict(connector.rfb_version));
-                        }
-                        VncVersion::RFB38
-                    } else if connector.rfb_version < server_version {
+                    let rfbversion = if connector.rfb_version < server_version {
                         connector.rfb_version
                     } else {
                         server_version
                     };
+                    #[cfg(feature = "auth-ard")]
+                    let rfbversion =
+                        if connector.ard.is_some() && _raw_version == *APPLE_RFB_VERSION {
+                            // Apple reports 003.889 and supports the 3.7/3.8
+                            // handshake, which is required to be offered the ARD
+                            // security type. Our ARD flow implements the 3.8
+                            // variant, so a lower client limit cannot be honoured
+                            // and is reported instead of being silently raised.
+                            if connector.rfb_version < VncVersion::RFB38 {
+                                return Err(VncError::ArdVersionConflict(connector.rfb_version));
+                            }
+                            VncVersion::RFB38
+                        } else {
+                            rfbversion
+                        };
 
                     // Record the negotiated rfbversion
                     connector.rfb_version = rfbversion;
@@ -70,6 +77,7 @@ where
                         return Err(VncError::ConnectError);
                     }
 
+                    #[cfg(feature = "auth-ard")]
                     if let Some(credentials) = connector.ard.take() {
                         if security_types.contains(&SecurityType::AppleArd) {
                             SecurityType::write(&SecurityType::AppleArd, &mut connector.stream)
@@ -103,7 +111,9 @@ where
                         }
                         // ARD is not on offer; only fall back to a legacy
                         // method when one could actually complete.
-                        let can_fallback = security_types.contains(&SecurityType::None)
+                        let can_fallback = security_types.contains(&SecurityType::None);
+                        #[cfg(feature = "auth-vnc")]
+                        let can_fallback = can_fallback
                             || (security_types.contains(&SecurityType::VncAuth)
                                 && connector.auth_methond.is_some());
                         if !can_fallback {
@@ -144,54 +154,65 @@ where
                             }
                         }
                     } else {
-                        // choose a auth method
-                        if security_types.contains(&SecurityType::VncAuth) {
-                            if connector.rfb_version != VncVersion::RFB33 {
-                                // In the security handshake (Section 7.1.2), rather than a two-way
-                                // negotiation, the server decides the security type and sends a single
-                                // word:
+                        #[cfg(not(feature = "auth-vnc"))]
+                        return Err(VncError::General(
+                            "No supported authentication method offered".to_owned(),
+                        ));
+                        #[cfg(feature = "auth-vnc")]
+                        {
+                            // choose a auth method
+                            if security_types.contains(&SecurityType::VncAuth) {
+                                if connector.rfb_version != VncVersion::RFB33 {
+                                    // In the security handshake (Section 7.1.2), rather than a two-way
+                                    // negotiation, the server decides the security type and sends a single
+                                    // word:
 
-                                //            +--------------+--------------+---------------+
-                                //            | No. of bytes | Type [Value] | Description   |
-                                //            +--------------+--------------+---------------+
-                                //            | 4            | U32          | security-type |
-                                //            +--------------+--------------+---------------+
+                                    //            +--------------+--------------+---------------+
+                                    //            | No. of bytes | Type [Value] | Description   |
+                                    //            +--------------+--------------+---------------+
+                                    //            | 4            | U32          | security-type |
+                                    //            +--------------+--------------+---------------+
 
-                                // The security-type may only take the value 0, 1, or 2.  A value of 0
-                                // means that the connection has failed and is followed by a string
-                                // giving the reason, as described in Section 7.1.2.
-                                SecurityType::write(&SecurityType::VncAuth, &mut connector.stream)
+                                    // The security-type may only take the value 0, 1, or 2.  A value of 0
+                                    // means that the connection has failed and is followed by a string
+                                    // giving the reason, as described in Section 7.1.2.
+                                    SecurityType::write(
+                                        &SecurityType::VncAuth,
+                                        &mut connector.stream,
+                                    )
                                     .await?;
-                            }
-                        } else {
-                            let msg = "Security type apart from Vnc Auth has not been implemented";
-                            return Err(VncError::General(msg.to_owned()));
-                        }
-
-                        // get password
-                        if connector.auth_methond.is_none() {
-                            return Err(VncError::NoPassword);
-                        }
-
-                        let credential = (connector.auth_methond.take().unwrap()).await?;
-
-                        // auth
-                        let auth = AuthHelper::read(&mut connector.stream, &credential).await?;
-                        auth.write(&mut connector.stream).await?;
-                        let result = auth.finish(&mut connector.stream).await?;
-                        if let AuthResult::Failed = result {
-                            if connector.rfb_version != VncVersion::RFB38 {
-                                // In VNC Authentication (Section 7.2.2), if the authentication fails,
-                                // the server sends the SecurityResult message, but does not send an
-                                // error message before closing the connection.
-                                return Err(VncError::WrongPassword);
+                                }
                             } else {
-                                let err_msg = crate::limits::string(
-                                    &mut connector.stream,
-                                    crate::limits::MAX_NAME,
-                                )
-                                .await?;
-                                return Err(VncError::General(err_msg));
+                                let msg =
+                                    "Security type apart from Vnc Auth has not been implemented";
+                                return Err(VncError::General(msg.to_owned()));
+                            }
+
+                            // get password
+                            if connector.auth_methond.is_none() {
+                                return Err(VncError::NoPassword);
+                            }
+
+                            let credential = (connector.auth_methond.take().unwrap()).await?;
+
+                            // auth
+                            let auth = AuthHelper::read(&mut connector.stream, &credential).await?;
+                            auth.write(&mut connector.stream).await?;
+                            let result = auth.finish(&mut connector.stream).await?;
+                            if let AuthResult::Failed = result {
+                                if connector.rfb_version != VncVersion::RFB38 {
+                                    // In VNC Authentication (Section 7.2.2), if the authentication fails,
+                                    // the server sends the SecurityResult message, but does not send an
+                                    // error message before closing the connection.
+                                    return Err(VncError::WrongPassword);
+                                } else {
+                                    let err_msg = crate::limits::string(
+                                        &mut connector.stream,
+                                        crate::limits::MAX_NAME,
+                                    )
+                                    .await?;
+                                    return Err(VncError::General(err_msg));
+                                }
                             }
                         }
                     }
@@ -222,13 +243,17 @@ where
 }
 
 /// Connection Builder to setup a vnc client
-pub struct VncConnector<S, F>
+pub struct VncConnector<S, F = std::future::Ready<Result<String, VncError>>>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
     stream: S,
+    #[cfg(feature = "auth-vnc")]
     auth_methond: Option<F>,
+    #[cfg(not(feature = "auth-vnc"))]
+    auth_future: std::marker::PhantomData<F>,
+    #[cfg(feature = "auth-ard")]
     ard: Option<ArdCredentials>,
     rfb_version: VncVersion,
     allow_shared: bool,
@@ -241,45 +266,6 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
 {
-    /// To new a vnc client configuration with stream `S`
-    ///
-    /// `S` should implement async I/O methods
-    ///
-    /// ```no_run
-    /// use vnc::{PixelFormat, VncConnector, VncError};
-    /// use tokio::{self, net::TcpStream};
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), VncError> {
-    ///     let tcp = TcpStream::connect("127.0.0.1:5900").await?;
-    ///     let vnc = VncConnector::new(tcp)
-    ///         .set_auth_method(async move { Ok("password".to_string()) })
-    ///         .add_encoding(vnc::VncEncoding::Tight)
-    ///         .add_encoding(vnc::VncEncoding::Zrle)
-    ///         .add_encoding(vnc::VncEncoding::CopyRect)
-    ///         .add_encoding(vnc::VncEncoding::Raw)
-    ///         .allow_shared(true)
-    ///         .set_pixel_format(PixelFormat::bgra())
-    ///         .build()?
-    ///         .try_start()
-    ///         .await?
-    ///         .finish()?;
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    pub fn new(stream: S) -> Self {
-        Self {
-            stream,
-            auth_methond: None,
-            ard: None,
-            allow_shared: true,
-            rfb_version: VncVersion::RFB38,
-            pixel_format: None,
-            encodings: Vec::new(),
-        }
-    }
-
     /// An async callback which is used to query credentials if the vnc server has set
     ///
     /// ```no_compile
@@ -319,9 +305,21 @@ where
     ///
     /// The future won't be polled if the sever doesn't apply any password protections to the session
     ///
-    pub fn set_auth_method(mut self, auth_callback: F) -> Self {
-        self.auth_methond = Some(auth_callback);
-        self
+    #[cfg(feature = "auth-vnc")]
+    pub fn set_auth_method<A>(self, auth_callback: A) -> VncConnector<S, A>
+    where
+        A: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
+    {
+        VncConnector {
+            stream: self.stream,
+            auth_methond: Some(auth_callback),
+            #[cfg(feature = "auth-ard")]
+            ard: self.ard,
+            rfb_version: self.rfb_version,
+            allow_shared: self.allow_shared,
+            pixel_format: self.pixel_format,
+            encodings: self.encodings,
+        }
     }
 
     /// Enable Apple Remote Desktop (RFB security type 30) authentication.
@@ -335,12 +333,13 @@ where
     /// When the server does not offer ARD the connection fails with
     /// [VncError::ArdNotOffered] unless a legacy method could actually
     /// complete: an unauthenticated session, or VNC authentication with
-    /// credentials supplied via [Self::set_auth_method].
+    /// credentials supplied via `set_auth_method` (with `auth-vnc`).
     ///
     /// The ARD flow requires the 3.8 handshake. If [Self::set_version]
     /// limited the client to an older version, the connection to an Apple
     /// server fails with [VncError::ArdVersionConflict] instead of silently
     /// raising that limit.
+    #[cfg(feature = "auth-ard")]
     pub fn set_ard_credentials(
         mut self,
         username: impl Into<String>,
@@ -415,5 +414,56 @@ where
             format.validate()?;
         }
         Ok(VncState::Handshake(self))
+    }
+}
+
+impl<S> VncConnector<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    /// To new a vnc client configuration with stream `S`
+    ///
+    /// `S` should implement async I/O methods
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "auth-vnc", feature = "encoding-tight", feature = "encoding-zrle"))]
+    /// # mod example {
+    /// use vnc::{PixelFormat, VncConnector, VncError};
+    /// use tokio::{self, net::TcpStream};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), VncError> {
+    ///     let tcp = TcpStream::connect("127.0.0.1:5900").await?;
+    ///     let vnc = VncConnector::new(tcp)
+    ///         .set_auth_method(async move { Ok("password".to_string()) })
+    ///         .add_encoding(vnc::VncEncoding::Tight)
+    ///         .add_encoding(vnc::VncEncoding::Zrle)
+    ///         .add_encoding(vnc::VncEncoding::CopyRect)
+    ///         .add_encoding(vnc::VncEncoding::Raw)
+    ///         .allow_shared(true)
+    ///         .set_pixel_format(PixelFormat::bgra())
+    ///         .build()?
+    ///         .try_start()
+    ///         .await?
+    ///         .finish()?;
+    ///     Ok(())
+    /// }
+    /// # }
+    /// ```
+    ///
+    pub fn new(stream: S) -> Self {
+        Self {
+            stream,
+            #[cfg(feature = "auth-vnc")]
+            auth_methond: None,
+            #[cfg(not(feature = "auth-vnc"))]
+            auth_future: std::marker::PhantomData,
+            #[cfg(feature = "auth-ard")]
+            ard: None,
+            allow_shared: true,
+            rfb_version: VncVersion::RFB38,
+            pixel_format: None,
+            encodings: Vec::new(),
+        }
     }
 }

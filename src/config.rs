@@ -10,18 +10,25 @@ pub enum VncEncoding {
     CopyRect = 1,
     // Rre = 2,
     // Hextile = 5,
+    #[cfg(feature = "encoding-tight")]
     Tight = 7,
+    #[cfg(feature = "encoding-trle")]
     Trle = 15,
+    #[cfg(feature = "encoding-zrle")]
     Zrle = 16,
+    #[cfg(feature = "cursor")]
     CursorPseudo = -239,
     DesktopSizePseudo = -223,
     LastRectPseudo = -224,
+    #[cfg(feature = "desktop-resize")]
     ExtendedDesktopSizePseudo = -308,
 }
 
-impl From<u32> for VncEncoding {
-    fn from(num: u32) -> Self {
-        Self::from_wire(num).unwrap_or(Self::Raw)
+impl TryFrom<u32> for VncEncoding {
+    type Error = VncError;
+
+    fn try_from(num: u32) -> Result<Self, Self::Error> {
+        Self::from_wire(num)
     }
 }
 
@@ -30,12 +37,17 @@ impl VncEncoding {
         match num as i32 {
             0 => Ok(Self::Raw),
             1 => Ok(Self::CopyRect),
+            #[cfg(feature = "encoding-tight")]
             7 => Ok(Self::Tight),
+            #[cfg(feature = "encoding-trle")]
             15 => Ok(Self::Trle),
+            #[cfg(feature = "encoding-zrle")]
             16 => Ok(Self::Zrle),
+            #[cfg(feature = "cursor")]
             -239 => Ok(Self::CursorPseudo),
             -223 => Ok(Self::DesktopSizePseudo),
             -224 => Ok(Self::LastRectPseudo),
+            #[cfg(feature = "desktop-resize")]
             -308 => Ok(Self::ExtendedDesktopSizePseudo),
             _ => Err(VncError::InvalidImageData),
         }

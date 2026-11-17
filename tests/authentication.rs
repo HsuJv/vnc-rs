@@ -1,3 +1,5 @@
+#![cfg(any(feature = "auth-ard", feature = "auth-vnc"))]
+
 use std::time::Duration;
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 use vnc::{VncConnector, VncEncoding, VncError, VncVersion};
@@ -5,6 +7,7 @@ use vnc::{VncConnector, VncEncoding, VncError, VncVersion};
 /// Apple's non-standard version string, reported by macOS servers.
 const APPLE_VERSION: &[u8; 12] = b"RFB 003.889\n";
 
+#[cfg(all(feature = "auth-ard", feature = "auth-vnc"))]
 #[tokio::test]
 async fn ard_authentication_completes_with_the_38_handshake() {
     let (client, mut server) = duplex(4096);
@@ -67,6 +70,7 @@ async fn ard_authentication_completes_with_the_38_handshake() {
     server_task.await.unwrap();
 }
 
+#[cfg(feature = "auth-ard")]
 #[tokio::test]
 async fn ard_with_a_lower_version_limit_is_rejected() {
     for version in [VncVersion::RFB33, VncVersion::RFB37] {
@@ -99,6 +103,7 @@ async fn ard_with_a_lower_version_limit_is_rejected() {
     }
 }
 
+#[cfg(all(feature = "auth-ard", feature = "auth-vnc"))]
 #[tokio::test]
 async fn missing_ard_support_is_reported() {
     let (client, mut server) = duplex(256);
@@ -126,6 +131,7 @@ async fn missing_ard_support_is_reported() {
     server_task.await.unwrap();
 }
 
+#[cfg(feature = "auth-ard")]
 #[tokio::test]
 async fn ard_without_fallback_credentials_reports_not_offered() {
     let (client, mut server) = duplex(256);
@@ -152,6 +158,7 @@ async fn ard_without_fallback_credentials_reports_not_offered() {
     server_task.await.unwrap();
 }
 
+#[cfg(feature = "auth-vnc")]
 #[tokio::test]
 async fn apple_version_still_downgrades_without_ard() {
     let (client, mut server) = duplex(256);
@@ -178,6 +185,7 @@ async fn apple_version_still_downgrades_without_ard() {
     server_task.await.unwrap();
 }
 
+#[cfg(feature = "auth-vnc")]
 #[tokio::test]
 async fn failures_finish_without_waiting_for_server_eof() {
     for version in [VncVersion::RFB33, VncVersion::RFB37, VncVersion::RFB38] {

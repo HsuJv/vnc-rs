@@ -4,20 +4,26 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum VncError {
     #[error("Auth is required but no password provided")]
+    #[cfg(feature = "auth-vnc")]
     NoPassword,
     #[error("No VNC encoding selected")]
     NoEncoding,
     #[error("Unknow VNC security type: {0}")]
     InvalidSecurityTyep(u8),
     #[error("Wrong password")]
+    #[cfg(feature = "auth-vnc")]
     WrongPassword,
     #[error("Apple Remote Desktop authentication failed: {0}")]
+    #[cfg(feature = "auth-ard")]
     ArdAuthFailed(String),
     #[error("The server does not offer Apple Remote Desktop (ARD) authentication")]
+    #[cfg(feature = "auth-ard")]
     ArdNotOffered,
     #[error("Apple Remote Desktop requires RFB 3.8, but the client version is limited to {0:?}")]
+    #[cfg(feature = "auth-ard")]
     ArdVersionConflict(crate::VncVersion),
     #[error("Malformed Apple ARD handshake: {0}")]
+    #[cfg(feature = "auth-ard")]
     ArdProtocol(String),
     #[error("Connect error with unknown reason")]
     ConnectError,

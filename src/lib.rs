@@ -6,6 +6,8 @@
 //! ## Simple example
 //!
 //! ```no_run
+//! # #[cfg(all(feature = "auth-vnc", feature = "encoding-tight", feature = "encoding-zrle", feature = "cursor"))]
+//! # mod example {
 //! use anyhow::{Context, Result};
 //! use minifb::{Window, WindowOptions};
 //! use tokio::{self, net::TcpStream};
@@ -188,6 +190,7 @@
 //!     }
 //! }
 //!
+//! # }
 //! ```
 //!
 //! ## License
@@ -210,9 +213,11 @@
 pub mod client;
 mod codec;
 pub mod config;
+#[cfg(feature = "desktop-resize")]
 mod desktop;
 pub mod error;
 pub mod event;
+#[cfg(feature = "desktop-resize")]
 pub use desktop::*;
 
 pub use client::VncClient;
