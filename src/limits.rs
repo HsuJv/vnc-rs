@@ -5,6 +5,7 @@ pub(crate) const MAX_PIXELS: usize = 8_294_400;
 pub(crate) const MAX_DIMENSION: u16 = 8192;
 pub(crate) const MAX_COMPRESSED: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_TEXT: usize = 1024 * 1024;
+pub(crate) const MAX_EXTENSION: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_NAME: usize = 4096;
 
 pub(crate) fn dimensions(width: u16, height: u16) -> Result<(), VncError> {

@@ -97,6 +97,7 @@ where
                                     connector.allow_shared,
                                     connector.pixel_format,
                                     connector.encodings,
+                                    connector.extension,
                                 )
                                 .await?,
                             ));
@@ -203,6 +204,7 @@ where
                             connector.allow_shared,
                             connector.pixel_format,
                             connector.encodings,
+                            connector.extension,
                         )
                         .await?,
                     ))
@@ -234,6 +236,7 @@ where
     allow_shared: bool,
     pixel_format: Option<PixelFormat>,
     encodings: Vec<VncEncoding>,
+    extension: Option<Box<dyn crate::ExtensionHandler>>,
 }
 
 impl<S, F> VncConnector<S, F>
@@ -277,6 +280,7 @@ where
             rfb_version: VncVersion::RFB38,
             pixel_format: None,
             encodings: Vec::new(),
+            extension: None,
         }
     }
 
@@ -402,6 +406,15 @@ where
     ///
     pub fn add_encoding(mut self, encoding: VncEncoding) -> Self {
         self.encodings.push(encoding);
+        self
+    }
+
+    /// Register a handler for non-RFC server message types (such as file transfer).
+    pub fn set_extension_handler<H>(mut self, handler: H) -> Self
+    where
+        H: crate::ExtensionHandler,
+    {
+        self.extension = Some(Box::new(handler));
         self
     }
 

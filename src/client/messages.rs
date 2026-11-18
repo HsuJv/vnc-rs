@@ -9,6 +9,7 @@ pub(super) enum ClientMsg {
     KeyEvent(u32, bool),
     PointerEvent(u16, u16, u8),
     ClientCutText(String),
+    Raw(Vec<u8>),
     #[cfg(not(target_arch = "wasm32"))]
     SetDesktopSize(crate::DesktopLayout),
 }
@@ -139,6 +140,10 @@ impl ClientMsg {
                 writer.write_all(&payload).await?;
                 Ok(())
             }
+            ClientMsg::Raw(payload) => {
+                writer.write_all(&payload).await?;
+                Ok(())
+            }
         }
     }
 }
@@ -149,6 +154,7 @@ pub(super) enum ServerMsg {
     // SetColorMapEntries,
     Bell,
     ServerCutText(String),
+    Extension(u8),
 }
 
 impl ServerMsg {
@@ -209,7 +215,7 @@ impl ServerMsg {
                     crate::limits::string(reader, crate::limits::MAX_TEXT).await?,
                 ))
             }
-            _ => Err(VncError::WrongServerMessage),
+            other => Ok(Self::Extension(other)),
         }
     }
 }

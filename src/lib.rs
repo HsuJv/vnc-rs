@@ -226,6 +226,7 @@ pub mod config;
 mod desktop;
 pub mod error;
 pub mod event;
+pub mod extension;
 pub use desktop::*;
 
 pub use client::VncClient;
@@ -233,5 +234,8 @@ pub use client::VncConnector;
 pub use config::*;
 pub use error::*;
 pub use event::*;
+pub use extension::{
+    ExtensionEvent, ExtensionFuture, ExtensionHandler, ExtensionStream,
+};
 
 mod limits;

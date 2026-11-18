@@ -98,6 +98,7 @@ impl VncInner {
         shared: bool,
         mut pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        mut extension: Option<Box<dyn crate::ExtensionHandler>>,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -162,6 +163,7 @@ impl VncInner {
                 &encodings,
                 &decoder_screen,
                 &decoder_desktop,
+                &mut extension,
             )
             .await;
             // Release the network worker and fail any pending resize before waiting
@@ -230,6 +232,12 @@ impl VncInner {
                         return Err(VncError::InvalidImageData);
                     }
                     ClientMsg::ClientCutText(text)
+                }
+                X11Event::Raw(bytes) => {
+                    if bytes.is_empty() || bytes.len() > crate::limits::MAX_EXTENSION {
+                        return Err(VncError::InvalidImageData);
+                    }
+                    ClientMsg::Raw(bytes)
                 }
             };
             Ok(msg)
@@ -303,11 +311,12 @@ impl VncClient {
         shared: bool,
         pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        extension: Option<Box<dyn crate::ExtensionHandler>>,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
+        let inner = VncInner::new(stream, shared, pixel_format, encodings, extension).await?;
         Ok(Self {
             server_name: Arc::from(inner.name.as_str()),
             desktop: Arc::clone(&inner.desktop),
@@ -467,16 +476,17 @@ async fn asycn_vnc_read_loop<S, F, Fut>(
     encodings: &[VncEncoding],
     screen: &AtomicU32,
     desktop: &DesktopState,
+    extension: &mut Option<Box<dyn crate::ExtensionHandler>>,
 ) -> Result<(), VncError>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncRead + Unpin + Send,
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
     tokio::select! {
         biased;
         _ = stop_ch => Ok(()),
-        result = read_vnc_messages(stream, pf, output_func, encodings, screen, desktop) => result,
+        result = read_vnc_messages(stream, pf, output_func, encodings, screen, desktop, extension) => result,
     }
 }
 
@@ -487,9 +497,10 @@ async fn read_vnc_messages<S, F, Fut>(
     encodings: &[VncEncoding],
     shared_screen: &AtomicU32,
     desktop: &DesktopState,
+    extension: &mut Option<Box<dyn crate::ExtensionHandler>>,
 ) -> Result<(), VncError>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncRead + Unpin + Send,
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
@@ -622,6 +633,17 @@ where
             }
             ServerMsg::ServerCutText(text) => {
                 output_func(VncEvent::Text(text)).await?;
+            }
+            ServerMsg::Extension(kind) => {
+                let Some(handler) = extension.as_mut() else {
+                    return Err(VncError::WrongServerMessage);
+                };
+                if !handler.claims(kind) {
+                    return Err(VncError::WrongServerMessage);
+                }
+                if let Some(event) = handler.read(kind, stream).await? {
+                    output_func(VncEvent::Extension(event)).await?;
+                }
             }
         }
     }
