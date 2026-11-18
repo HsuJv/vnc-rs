@@ -1,4 +1,7 @@
-use super::*;
+#[cfg(feature = "cursor")]
+use super::cursor::Decoder as CursorDecoder;
+#[cfg(feature = "encoding-tight")]
+use super::tight::Decoder as TightDecoder;
 #[cfg(feature = "encoding-tight")]
 use crate::VncError;
 use crate::{PixelFormat, Rect, VncEvent};

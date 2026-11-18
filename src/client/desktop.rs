@@ -1,20 +1,143 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::messages::ClientMsg;
-use crate::{DesktopLayout, DesktopReason, DesktopStatus, DesktopUpdate, ResizeError};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
-use std::sync::{Mutex, MutexGuard};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+//! Desktop layout coordination, update batches and resize requests.
+
+use crate::client::{connection::pack_screen, messages::ClientMsg};
+use crate::{
+    DesktopLayout, DesktopReason, DesktopStatus, DesktopUpdate, ResizeError, VncError, VncEvent,
+};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
+};
+use tokio::sync::{mpsc::Sender, oneshot};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::time::{timeout, Duration};
+
+#[derive(Clone, Default)]
+pub(crate) struct Desktop {
+    state: Arc<DesktopState>,
+}
+
+impl Desktop {
+    pub(crate) fn close(&self) {
+        self.state.close();
+    }
+
+    pub(crate) fn legacy_resize(&self) {
+        self.state.legacy_resize();
+    }
+
+    pub(crate) fn batch(&self) -> Batch<'_> {
+        Batch {
+            desktop: self,
+            updates: crate::desktop::UpdateBatch::default(),
+            framebuffer_changed: false,
+        }
+    }
+
+    pub(in crate::client) fn client(&self, _input: &Sender<ClientMsg>) -> Client {
+        Client {
+            desktop: self.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            input: _input.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Client {
+    desktop: Desktop,
+    #[cfg(not(target_arch = "wasm32"))]
+    input: Sender<ClientMsg>,
+}
+
+impl Client {
+    pub(in crate::client) fn layout(&self) -> Option<DesktopLayout> {
+        self.desktop.state.layout()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::client) async fn resize(
+        &self,
+        width: u16,
+        height: u16,
+    ) -> Result<DesktopLayout, crate::ResizeError> {
+        self.desktop.state.request(&self.input, width, height).await
+    }
+}
+
+pub(crate) struct Batch<'a> {
+    desktop: &'a Desktop,
+    updates: crate::desktop::UpdateBatch,
+    framebuffer_changed: bool,
+}
+
+impl Batch<'_> {
+    pub(crate) fn before_pixels(&mut self) -> Result<(), VncError> {
+        if !self.updates.is_empty() {
+            return Err(VncError::InvalidImageData);
+        }
+        self.framebuffer_changed = true;
+        Ok(())
+    }
+
+    pub(crate) async fn extended<F, Fut>(
+        &mut self,
+        update: DesktopUpdate,
+        screen: &mut (u16, u16),
+        shared: &AtomicU32,
+        output: &F,
+    ) -> Result<(), VncError>
+    where
+        F: Fn(VncEvent) -> Fut,
+        Fut: Future<Output = Result<(), VncError>>,
+    {
+        if update.reason == DesktopReason::ThisClient || !self.updates.is_empty() {
+            // Keep client acknowledgements atomic until the full message is validated.
+            if self.framebuffer_changed {
+                return Err(VncError::InvalidImageData);
+            }
+            self.updates.push(update)?;
+        } else {
+            // Server announcements can precede pixels in the same update.
+            if let Some(layout) = &update.layout {
+                *screen = (layout.width, layout.height);
+                shared.store(pack_screen(*screen), Ordering::Release);
+            }
+            self.desktop.state.observe(&update);
+            output(VncEvent::DesktopUpdate(update)).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn finish<F, Fut>(
+        self,
+        screen: &mut (u16, u16),
+        shared: &AtomicU32,
+        output: &F,
+    ) -> Result<(), VncError>
+    where
+        F: Fn(VncEvent) -> Fut,
+        Fut: Future<Output = Result<(), VncError>>,
+    {
+        for update in self.updates.into_updates() {
+            if let Some(layout) = &update.layout {
+                *screen = (layout.width, layout.height);
+                shared.store(pack_screen(*screen), Ordering::Release);
+            }
+            self.desktop.state.observe(&update);
+            output(VncEvent::DesktopUpdate(update)).await?;
+        }
+        Ok(())
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 const RESIZE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
-pub(super) struct DesktopState {
+struct DesktopState {
     inner: Mutex<State>,
 }
 
@@ -40,11 +163,11 @@ impl DesktopState {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(super) fn layout(&self) -> Option<DesktopLayout> {
+    fn layout(&self) -> Option<DesktopLayout> {
         self.lock().layout.clone()
     }
 
-    pub(super) fn observe(&self, update: &DesktopUpdate) {
+    fn observe(&self, update: &DesktopUpdate) {
         let mut state = self.lock();
         if let Some(layout) = &update.layout {
             state.layout = Some(layout.clone());
@@ -68,7 +191,7 @@ impl DesktopState {
         let _ = pending.reply.send(result);
     }
 
-    pub(super) fn legacy_resize(&self) {
+    fn legacy_resize(&self) {
         let mut state = self.lock();
         state.layout = None;
         if let Some(pending) = state.pending.take() {
@@ -77,7 +200,7 @@ impl DesktopState {
         }
     }
 
-    pub(super) fn close(&self) {
+    fn close(&self) {
         let mut state = self.lock();
         state.closed = true;
         if let Some(pending) = state.pending.take() {
@@ -87,7 +210,7 @@ impl DesktopState {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) async fn request(
+    async fn request(
         self: &Arc<Self>,
         input: &Sender<ClientMsg>,
         width: u16,

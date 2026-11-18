@@ -1,7 +1,97 @@
-#[cfg(feature = "auth-vnc")]
-use super::security;
+//! Authentication configuration and protocol negotiation.
 use crate::{VncError, VncVersion};
+use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::info;
+
+#[cfg(feature = "auth-ard")]
+mod ard;
+#[cfg(not(feature = "auth-ard"))]
+#[path = "ard_disabled.rs"]
+mod ard;
+
+#[cfg(feature = "auth-vnc")]
+mod vnc;
+#[cfg(not(feature = "auth-vnc"))]
+#[path = "vnc_disabled.rs"]
+mod vnc;
+
+pub(in crate::client) struct Config<F> {
+    vnc: vnc::Config<F>,
+    ard: ard::Config,
+}
+
+impl<F> Config<F> {
+    pub(in crate::client) fn new() -> Self {
+        Self {
+            vnc: vnc::Config::new(),
+            ard: ard::Config::new(),
+        }
+    }
+
+    pub(in crate::client) fn negotiate_version(
+        &self,
+        client: VncVersion,
+        server: VncVersion,
+        raw: &[u8; 12],
+    ) -> Result<VncVersion, VncError> {
+        self.ard.negotiate_version(client, server, raw)
+    }
+}
+
+impl<F> Config<F>
+where
+    F: Future<Output = Result<String, VncError>>,
+{
+    pub(in crate::client) async fn authenticate<S>(
+        &mut self,
+        stream: &mut S,
+        version: VncVersion,
+    ) -> Result<(), VncError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let methods = SecurityType::read(stream, &version).await?;
+        if methods.is_empty() {
+            return Err(VncError::ConnectError);
+        }
+        let fallback = methods.contains(&SecurityType::None) || self.vnc.available(&methods);
+        if self.ard.authenticate(stream, &methods, fallback).await? {
+            return Ok(());
+        }
+        if methods.contains(&SecurityType::None) {
+            match version {
+                VncVersion::RFB33 => {
+                    // If the security-type is 1, for no authentication, the server does not
+                    // send the SecurityResult message but proceeds directly to the
+                    // initialization messages (Section 7.3).
+                    info!("No auth needed in vnc3.3");
+                }
+                VncVersion::RFB37 => {
+                    // After the security handshake, if the security-type is 1, for no
+                    // authentication, the server does not send the SecurityResult message
+                    // but proceeds directly to the initialization messages (Section 7.3).
+                    info!("No auth needed in vnc3.7");
+                    SecurityType::write(&SecurityType::None, stream).await?;
+                }
+                VncVersion::RFB38 => {
+                    info!("No auth needed in vnc3.8");
+                    SecurityType::write(&SecurityType::None, stream).await?;
+                    let result = stream.read_u32().await?.try_into()?;
+                    if let AuthResult::Failed = result {
+                        return Err(VncError::General(
+                            crate::limits::string(stream, crate::limits::MAX_NAME).await?,
+                        ));
+                    }
+                }
+            }
+        } else {
+            self.vnc.authenticate(stream, version, &methods).await?;
+        }
+        info!("auth done, client connected");
+        Ok(())
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,81 +218,6 @@ impl TryFrom<u32> for AuthResult {
 impl From<AuthResult> for u32 {
     fn from(e: AuthResult) -> Self {
         e as u32
-    }
-}
-
-#[cfg(feature = "auth-vnc")]
-pub(super) struct AuthHelper {
-    challenge: [u8; 16],
-    key: [u8; 8],
-}
-
-#[cfg(feature = "auth-vnc")]
-impl AuthHelper {
-    pub(super) async fn read<S>(reader: &mut S, credential: &str) -> Result<Self, VncError>
-    where
-        S: AsyncRead + Unpin,
-    {
-        let mut challenge = [0; 16];
-        reader.read_exact(&mut challenge).await?;
-
-        let credential_len = credential.len();
-        let mut key = [0u8; 8];
-        for (i, key_i) in key.iter_mut().enumerate() {
-            let c = if i < credential_len {
-                credential.as_bytes()[i]
-            } else {
-                0
-            };
-            let mut cs = 0u8;
-            for j in 0..8 {
-                cs |= ((c >> j) & 1) << (7 - j)
-            }
-            *key_i = cs;
-        }
-
-        Ok(Self { challenge, key })
-    }
-
-    pub(super) async fn write<S>(&self, writer: &mut S) -> Result<(), VncError>
-    where
-        S: AsyncWrite + Unpin,
-    {
-        let encrypted = security::des::encrypt(&self.challenge, &self.key);
-        writer.write_all(&encrypted).await?;
-        Ok(())
-    }
-
-    pub(super) async fn finish<S>(self, reader: &mut S) -> Result<AuthResult, VncError>
-    where
-        S: AsyncRead + AsyncWrite + Unpin,
-    {
-        let result = reader.read_u32().await?;
-        result.try_into()
-    }
-}
-
-#[cfg(all(test, feature = "auth-vnc"))]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn authentication_result_is_checked() {
-        for status in [0_u32, 1, 2, 256, u32::MAX] {
-            let (mut server, mut client) = tokio::io::duplex(4);
-            server.write_all(&status.to_be_bytes()).await.unwrap();
-            let auth = AuthHelper {
-                challenge: [0; 16],
-                key: [0; 8],
-            };
-
-            let result = auth.finish(&mut client).await;
-            match status {
-                0 => assert!(matches!(result, Ok(AuthResult::Ok))),
-                1 => assert!(matches!(result, Ok(AuthResult::Failed))),
-                _ => assert!(matches!(result, Err(VncError::General(_)))),
-            }
-        }
     }
 }
 

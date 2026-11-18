@@ -6,7 +6,9 @@
 //! itself continues unencrypted, matching the reference implementations
 //! (Valence, gtk-vnc, Wireshark's dissector).
 
+#[path = "creds.rs"]
 mod creds;
+#[path = "dh.rs"]
 mod dh;
 
 use num_bigint::BigUint;

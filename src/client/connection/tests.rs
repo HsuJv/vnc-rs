@@ -94,8 +94,7 @@ async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
                     VncEncoding::DesktopSizePseudo,
                 ],
                 &AtomicU32::new(pack_screen((64, 64))),
-                #[cfg(feature = "desktop-resize")]
-                &DesktopState::default(),
+                &Desktop::default(),
             ),
         )
         .await
@@ -137,8 +136,7 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
         &mut stopped,
         &[VncEncoding::DesktopSizePseudo],
         &AtomicU32::new(pack_screen((64, 64))),
-        #[cfg(feature = "desktop-resize")]
-        &DesktopState::default(),
+        &Desktop::default(),
     )
     .await;
     assert!(matches!(result, Err(VncError::IoError(_))));
@@ -173,8 +171,7 @@ async fn shutdown_interrupts_a_full_event_queue() {
         }
     };
     let screen = AtomicU32::new(pack_screen((1, 1)));
-    #[cfg(feature = "desktop-resize")]
-    let desktop = DesktopState::default();
+    let desktop = Desktop::default();
     let task = asycn_vnc_read_loop(
         &mut input,
         &format,
@@ -182,7 +179,6 @@ async fn shutdown_interrupts_a_full_event_queue() {
         &mut stopped,
         &[],
         &screen,
-        #[cfg(feature = "desktop-resize")]
         &desktop,
     );
     tokio::pin!(task);
@@ -284,18 +280,13 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
     let (_events, output_ch) = channel(OUTPUT_CHANNEL_SIZE);
     let (network_stop, network_stopped) = oneshot::channel();
     let (decoder_stop, decoder_stopped) = oneshot::channel();
-    #[cfg(feature = "desktop-resize")]
-    let desktop = Arc::new(DesktopState::default());
+    let desktop = Desktop::default();
     let client = VncClient {
         server_name: Arc::from(""),
-        #[cfg(feature = "desktop-resize")]
-        desktop: Arc::clone(&desktop),
-        #[cfg(feature = "desktop-resize")]
-        input_ch: input_ch.clone(),
+        desktop: desktop.client(&input_ch),
         inner: Arc::new(Mutex::new(VncInner {
             name: String::new(),
             screen: Arc::new(AtomicU32::new(pack_screen((1, 1)))),
-            #[cfg(feature = "desktop-resize")]
             desktop,
             input_ch,
             output_ch,
