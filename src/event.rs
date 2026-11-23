@@ -84,6 +84,8 @@ pub enum VncEvent {
     /// According to [RFC6143](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.6.4)
     ///
     Text(String),
+    /// Protocol extension message decoded by a registered [`crate::ExtensionHandler`].
+    Extension(crate::ExtensionEvent),
     /// If any unexpected error happens in the async process routines
     /// This event will propagate the error to the current context
     Error(String),
@@ -152,4 +154,6 @@ pub enum X11Event {
     /// Only Latin-1 character set is allowed
     ///
     CopyText(String),
+    /// Send a raw client-to-server protocol extension message.
+    Raw(Vec<u8>),
 }

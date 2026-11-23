@@ -12,7 +12,7 @@ async fn decoder_error_releases_network_before_output_drains() {
         .await
         .unwrap();
     server.write_u32(0).await.unwrap();
-    let client = VncClient::new(stream, true, None, vec![VncEncoding::Raw])
+    let client = VncClient::new(stream, true, None, vec![VncEncoding::Raw], None)
         .await
         .unwrap();
     // ClientInit, SetEncodings and the initial FramebufferUpdateRequest.

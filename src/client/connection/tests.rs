@@ -83,17 +83,20 @@ async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
             Duration::from_secs(1),
             asycn_vnc_read_loop(
                 &mut client,
-                &PixelFormat::rgba(),
-                &|_| async { Ok(()) },
                 &mut stopped,
-                &[
-                    VncEncoding::Raw,
-                    VncEncoding::CopyRect,
-                    VncEncoding::Zrle,
-                    VncEncoding::DesktopSizePseudo,
-                ],
-                &AtomicU32::new(pack_screen((64, 64))),
-                &DesktopState::default(),
+                &DecoderContext {
+                    pixel_format: &PixelFormat::rgba(),
+                    output_func: &|_: VncEvent| async { Ok(()) },
+                    encodings: &[
+                        VncEncoding::Raw,
+                        VncEncoding::CopyRect,
+                        VncEncoding::Zrle,
+                        VncEncoding::DesktopSizePseudo,
+                    ],
+                    screen: &AtomicU32::new(pack_screen((64, 64))),
+                    desktop: &DesktopState::default(),
+                },
+                &mut None,
             ),
         )
         .await
@@ -127,15 +130,18 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
     let (_stop, mut stopped) = oneshot::channel();
     let result = asycn_vnc_read_loop(
         &mut bytes.as_slice(),
-        &PixelFormat::rgba(),
-        &|event| {
-            output.lock().unwrap().push(event);
-            async { Ok(()) }
-        },
         &mut stopped,
-        &[VncEncoding::DesktopSizePseudo],
-        &AtomicU32::new(pack_screen((64, 64))),
-        &DesktopState::default(),
+        &DecoderContext {
+            pixel_format: &PixelFormat::rgba(),
+            output_func: &|event| {
+                output.lock().unwrap().push(event);
+                async { Ok(()) }
+            },
+            encodings: &[VncEncoding::DesktopSizePseudo],
+            screen: &AtomicU32::new(pack_screen((64, 64))),
+            desktop: &DesktopState::default(),
+        },
+        &mut None,
     )
     .await;
     assert!(matches!(result, Err(VncError::IoError(_))));
@@ -171,15 +177,15 @@ async fn shutdown_interrupts_a_full_event_queue() {
     };
     let screen = AtomicU32::new(pack_screen((1, 1)));
     let desktop = DesktopState::default();
-    let task = asycn_vnc_read_loop(
-        &mut input,
-        &format,
-        &deliver,
-        &mut stopped,
-        &[],
-        &screen,
-        &desktop,
-    );
+    let mut extension = None;
+    let ctx = DecoderContext {
+        pixel_format: &format,
+        output_func: &deliver,
+        encodings: &[],
+        screen: &screen,
+        desktop: &desktop,
+    };
+    let task = asycn_vnc_read_loop(&mut input, &mut stopped, &ctx, &mut extension);
     tokio::pin!(task);
     assert!(futures::poll!(task.as_mut()).is_pending());
     assert_eq!(calls.get(), 1);
@@ -325,4 +331,72 @@ async fn server_name_survives_close_and_clone() {
         client.close().await.unwrap();
         assert_eq!(clone.server_name(), name);
     }
+}
+
+#[tokio::test]
+async fn extension_handler_reads_claimed_messages_and_writes_raw() {
+    struct Type7Handler;
+    impl crate::ExtensionHandler for Type7Handler {
+        fn claims(&self, kind: u8) -> bool {
+            kind == 7
+        }
+        fn read<'a>(
+            &'a mut self,
+            kind: u8,
+            stream: crate::ExtensionStream<'a>,
+        ) -> crate::ExtensionFuture<'a> {
+            Box::pin(async move {
+                let len = stream.read_u8().await? as usize;
+                let mut payload = vec![0; len];
+                stream.read_exact(&mut payload).await?;
+                Ok(Some(crate::ExtensionEvent {
+                    kind,
+                    data: payload,
+                }))
+            })
+        }
+    }
+
+    let (stream, mut server) = duplex(1024);
+    let server_task = tokio::spawn(async move {
+        super::resize_tests::handshake(&mut server, (16, 16)).await;
+        // Send extension message type 7 with 4-byte payload, followed by Bell (2).
+        server
+            .write_all(&[7, 4, b'p', b'o', b'n', b'g', 2])
+            .await
+            .unwrap();
+        let mut raw_msg = [0_u8; 5];
+        server.read_exact(&mut raw_msg).await.unwrap();
+        assert_eq!(&raw_msg, b"\x07ping");
+    });
+
+    let client = crate::VncConnector::new(stream)
+        .set_auth_method(async { Ok(String::new()) })
+        .set_pixel_format(PixelFormat::rgba())
+        .add_encoding(VncEncoding::Raw)
+        .set_extension_handler(Type7Handler)
+        .build()
+        .unwrap()
+        .try_start()
+        .await
+        .unwrap()
+        .finish()
+        .unwrap();
+
+    assert!(matches!(
+        client.recv_event().await.unwrap(),
+        VncEvent::SetResolution(_)
+    ));
+    let ext = client.recv_event().await.unwrap();
+    assert!(matches!(
+        ext,
+        VncEvent::Extension(ref e) if e.kind == 7 && e.data == b"pong"
+    ));
+    assert!(matches!(client.recv_event().await.unwrap(), VncEvent::Bell));
+    client
+        .input(X11Event::Raw(b"\x07ping".to_vec()))
+        .await
+        .unwrap();
+    server_task.await.unwrap();
+    client.close().await.unwrap();
 }

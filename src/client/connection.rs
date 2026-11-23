@@ -98,6 +98,7 @@ impl VncInner {
         shared: bool,
         mut pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        mut extension: Option<Box<dyn crate::ExtensionHandler>>,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -153,15 +154,17 @@ impl VncInner {
                 Ok(())
             };
 
-            let pf = pixel_format.as_ref().unwrap();
             let result = asycn_vnc_read_loop(
                 &mut conn_ch_rx,
-                pf,
-                &output_func,
                 &mut decoding_stop_rx,
-                &encodings,
-                &decoder_screen,
-                &decoder_desktop,
+                &DecoderContext {
+                    pixel_format: pixel_format.as_ref().unwrap(),
+                    output_func: &output_func,
+                    encodings: encodings.as_slice(),
+                    screen: decoder_screen.as_ref(),
+                    desktop: decoder_desktop.as_ref(),
+                },
+                &mut extension,
             )
             .await;
             // Release the network worker and fail any pending resize before waiting
@@ -230,6 +233,12 @@ impl VncInner {
                         return Err(VncError::InvalidImageData);
                     }
                     ClientMsg::ClientCutText(text)
+                }
+                X11Event::Raw(bytes) => {
+                    if bytes.is_empty() || bytes.len() > crate::limits::MAX_EXTENSION {
+                        return Err(VncError::InvalidImageData);
+                    }
+                    ClientMsg::Raw(bytes)
                 }
             };
             Ok(msg)
@@ -303,11 +312,12 @@ impl VncClient {
         shared: bool,
         pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        extension: Option<Box<dyn crate::ExtensionHandler>>,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
+        let inner = VncInner::new(stream, shared, pixel_format, encodings, extension).await?;
         Ok(Self {
             server_name: Arc::from(inner.name.as_str()),
             desktop: Arc::clone(&inner.desktop),
@@ -459,40 +469,50 @@ where
     Ok(())
 }
 
+/// The read-only session state a decoding run needs: negotiated format and
+/// encodings, the event sink, and the framebuffer size shared with the input path.
+struct DecoderContext<'a, F> {
+    pixel_format: &'a PixelFormat,
+    output_func: &'a F,
+    encodings: &'a [VncEncoding],
+    screen: &'a AtomicU32,
+    desktop: &'a DesktopState,
+}
+
 async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
-    pf: &PixelFormat,
-    output_func: &F,
     stop_ch: &mut oneshot::Receiver<()>,
-    encodings: &[VncEncoding],
-    screen: &AtomicU32,
-    desktop: &DesktopState,
+    ctx: &DecoderContext<'_, F>,
+    extension: &mut Option<Box<dyn crate::ExtensionHandler>>,
 ) -> Result<(), VncError>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncRead + Unpin + Send,
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
     tokio::select! {
         biased;
         _ = stop_ch => Ok(()),
-        result = read_vnc_messages(stream, pf, output_func, encodings, screen, desktop) => result,
+        result = read_vnc_messages(stream, ctx, extension) => result,
     }
 }
 
 async fn read_vnc_messages<S, F, Fut>(
     stream: &mut S,
-    pf: &PixelFormat,
-    output_func: &F,
-    encodings: &[VncEncoding],
-    shared_screen: &AtomicU32,
-    desktop: &DesktopState,
+    ctx: &DecoderContext<'_, F>,
+    extension: &mut Option<Box<dyn crate::ExtensionHandler>>,
 ) -> Result<(), VncError>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncRead + Unpin + Send,
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
+    let pf = ctx.pixel_format;
+    let output_func = ctx.output_func;
+    let encodings = ctx.encodings;
+    let shared_screen = ctx.screen;
+    let desktop = ctx.desktop;
+
     let mut raw_decoder = codec::RawDecoder::new();
     let mut zrle_decoder = codec::ZrleDecoder::new();
     let mut tight_decoder = codec::TightDecoder::new();
@@ -622,6 +642,17 @@ where
             }
             ServerMsg::ServerCutText(text) => {
                 output_func(VncEvent::Text(text)).await?;
+            }
+            ServerMsg::Extension(kind) => {
+                let Some(handler) = extension.as_mut() else {
+                    return Err(VncError::WrongServerMessage);
+                };
+                if !handler.claims(kind) {
+                    return Err(VncError::WrongServerMessage);
+                }
+                if let Some(event) = handler.read(kind, stream).await? {
+                    output_func(VncEvent::Extension(event)).await?;
+                }
             }
         }
     }
