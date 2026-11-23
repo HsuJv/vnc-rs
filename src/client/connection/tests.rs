@@ -361,7 +361,10 @@ async fn extension_handler_reads_claimed_messages_and_writes_raw() {
     let server_task = tokio::spawn(async move {
         super::resize_tests::handshake(&mut server, (16, 16)).await;
         // Send extension message type 7 with 4-byte payload, followed by Bell (2).
-        server.write_all(&[7, 4, b'p', b'o', b'n', b'g', 2]).await.unwrap();
+        server
+            .write_all(&[7, 4, b'p', b'o', b'n', b'g', 2])
+            .await
+            .unwrap();
         let mut raw_msg = [0_u8; 5];
         server.read_exact(&mut raw_msg).await.unwrap();
         assert_eq!(&raw_msg, b"\x07ping");
@@ -380,14 +383,20 @@ async fn extension_handler_reads_claimed_messages_and_writes_raw() {
         .finish()
         .unwrap();
 
-    assert!(matches!(client.recv_event().await.unwrap(), VncEvent::SetResolution(_)));
+    assert!(matches!(
+        client.recv_event().await.unwrap(),
+        VncEvent::SetResolution(_)
+    ));
     let ext = client.recv_event().await.unwrap();
     assert!(matches!(
         ext,
         VncEvent::Extension(ref e) if e.kind == 7 && e.data == b"pong"
     ));
     assert!(matches!(client.recv_event().await.unwrap(), VncEvent::Bell));
-    client.input(X11Event::Raw(b"\x07ping".to_vec())).await.unwrap();
+    client
+        .input(X11Event::Raw(b"\x07ping".to_vec()))
+        .await
+        .unwrap();
     server_task.await.unwrap();
     client.close().await.unwrap();
 }

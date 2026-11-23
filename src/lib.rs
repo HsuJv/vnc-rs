@@ -234,8 +234,6 @@ pub use client::VncConnector;
 pub use config::*;
 pub use error::*;
 pub use event::*;
-pub use extension::{
-    ExtensionEvent, ExtensionFuture, ExtensionHandler, ExtensionStream,
-};
+pub use extension::{ExtensionEvent, ExtensionFuture, ExtensionHandler, ExtensionStream};
 
 mod limits;
