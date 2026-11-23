@@ -83,17 +83,19 @@ async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
             Duration::from_secs(1),
             asycn_vnc_read_loop(
                 &mut client,
-                &PixelFormat::rgba(),
-                &|_| async { Ok(()) },
                 &mut stopped,
-                &[
-                    VncEncoding::Raw,
-                    VncEncoding::CopyRect,
-                    VncEncoding::Zrle,
-                    VncEncoding::DesktopSizePseudo,
-                ],
-                &AtomicU32::new(pack_screen((64, 64))),
-                &DesktopState::default(),
+                &DecoderContext {
+                    pixel_format: &PixelFormat::rgba(),
+                    output_func: &|_: VncEvent| async { Ok(()) },
+                    encodings: &[
+                        VncEncoding::Raw,
+                        VncEncoding::CopyRect,
+                        VncEncoding::Zrle,
+                        VncEncoding::DesktopSizePseudo,
+                    ],
+                    screen: &AtomicU32::new(pack_screen((64, 64))),
+                    desktop: &DesktopState::default(),
+                },
                 &mut None,
             ),
         )
@@ -128,15 +130,17 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
     let (_stop, mut stopped) = oneshot::channel();
     let result = asycn_vnc_read_loop(
         &mut bytes.as_slice(),
-        &PixelFormat::rgba(),
-        &|event| {
-            output.lock().unwrap().push(event);
-            async { Ok(()) }
-        },
         &mut stopped,
-        &[VncEncoding::DesktopSizePseudo],
-        &AtomicU32::new(pack_screen((64, 64))),
-        &DesktopState::default(),
+        &DecoderContext {
+            pixel_format: &PixelFormat::rgba(),
+            output_func: &|event| {
+                output.lock().unwrap().push(event);
+                async { Ok(()) }
+            },
+            encodings: &[VncEncoding::DesktopSizePseudo],
+            screen: &AtomicU32::new(pack_screen((64, 64))),
+            desktop: &DesktopState::default(),
+        },
         &mut None,
     )
     .await;
@@ -174,16 +178,14 @@ async fn shutdown_interrupts_a_full_event_queue() {
     let screen = AtomicU32::new(pack_screen((1, 1)));
     let desktop = DesktopState::default();
     let mut extension = None;
-    let task = asycn_vnc_read_loop(
-        &mut input,
-        &format,
-        &deliver,
-        &mut stopped,
-        &[],
-        &screen,
-        &desktop,
-        &mut extension,
-    );
+    let ctx = DecoderContext {
+        pixel_format: &format,
+        output_func: &deliver,
+        encodings: &[],
+        screen: &screen,
+        desktop: &desktop,
+    };
+    let task = asycn_vnc_read_loop(&mut input, &mut stopped, &ctx, &mut extension);
     tokio::pin!(task);
     assert!(futures::poll!(task.as_mut()).is_pending());
     assert_eq!(calls.get(), 1);
