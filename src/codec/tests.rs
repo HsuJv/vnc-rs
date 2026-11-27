@@ -1,7 +1,13 @@
-use super::*;
-use crate::{PixelFormat, Rect, VncError, VncEvent};
+#[cfg(feature = "cursor")]
+use super::cursor::Decoder as CursorDecoder;
+#[cfg(feature = "encoding-tight")]
+use super::tight::Decoder as TightDecoder;
+#[cfg(feature = "encoding-tight")]
+use crate::VncError;
+use crate::{PixelFormat, Rect, VncEvent};
 use std::sync::Mutex;
 
+#[cfg(feature = "encoding-tight")]
 #[tokio::test]
 async fn tight_fill_copy_and_palette_modes_preserve_pixels() {
     let rect = Rect {
@@ -41,6 +47,7 @@ async fn tight_fill_copy_and_palette_modes_preserve_pixels() {
     }
 }
 
+#[cfg(feature = "encoding-tight")]
 #[tokio::test]
 async fn tight_rejects_invalid_palette_indexes_and_unsupported_formats() {
     let rect = Rect {
@@ -72,6 +79,7 @@ async fn tight_rejects_invalid_palette_indexes_and_unsupported_formats() {
     assert!(matches!(result, Err(VncError::WrongPixelFormat)));
 }
 
+#[cfg(feature = "cursor")]
 #[tokio::test]
 async fn cursor_preserves_alpha_mask_and_accepts_empty_shapes() {
     for (width, bytes, expected) in [
@@ -103,6 +111,7 @@ async fn cursor_preserves_alpha_mask_and_accepts_empty_shapes() {
     }
 }
 
+#[cfg(feature = "encoding-tight")]
 #[tokio::test]
 async fn tight_rejects_component_widths_its_filters_cannot_decode() {
     let mut format = PixelFormat::rgba();

@@ -40,6 +40,7 @@ async fn oversized_initialization_is_rejected_before_payload_reads() {
 }
 
 #[tokio::test]
+#[cfg(all(feature = "encoding-zrle", feature = "encoding-tight"))]
 async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
     let rect = Rect {
         x: 0,
@@ -93,7 +94,7 @@ async fn invalid_rectangles_and_lengths_are_rejected_before_payload_reads() {
                     VncEncoding::DesktopSizePseudo,
                 ],
                 &AtomicU32::new(pack_screen((64, 64))),
-                &DesktopState::default(),
+                &Desktop::default(),
             ),
         )
         .await
@@ -135,7 +136,7 @@ async fn raw_is_implicit_and_resize_changes_decoder_bounds() {
         &mut stopped,
         &[VncEncoding::DesktopSizePseudo],
         &AtomicU32::new(pack_screen((64, 64))),
-        &DesktopState::default(),
+        &Desktop::default(),
     )
     .await;
     assert!(matches!(result, Err(VncError::IoError(_))));
@@ -170,7 +171,7 @@ async fn shutdown_interrupts_a_full_event_queue() {
         }
     };
     let screen = AtomicU32::new(pack_screen((1, 1)));
-    let desktop = DesktopState::default();
+    let desktop = Desktop::default();
     let task = asycn_vnc_read_loop(
         &mut input,
         &format,
@@ -279,11 +280,10 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
     let (_events, output_ch) = channel(OUTPUT_CHANNEL_SIZE);
     let (network_stop, network_stopped) = oneshot::channel();
     let (decoder_stop, decoder_stopped) = oneshot::channel();
-    let desktop = Arc::new(DesktopState::default());
+    let desktop = Desktop::default();
     let client = VncClient {
         server_name: Arc::from(""),
-        desktop: Arc::clone(&desktop),
-        input_ch: input_ch.clone(),
+        desktop: desktop.client(&input_ch),
         inner: Arc::new(Mutex::new(VncInner {
             name: String::new(),
             screen: Arc::new(AtomicU32::new(pack_screen((1, 1)))),
@@ -311,6 +311,12 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
 }
 
 #[tokio::test]
+#[cfg(all(
+    feature = "desktop-resize",
+    feature = "cursor",
+    feature = "encoding-zrle",
+    feature = "auth-vnc"
+))]
 async fn server_name_survives_close_and_clone() {
     for name in ["", "Test workstation ÆØÅ"] {
         let (client_stream, mut server) = duplex(4096);

@@ -9,7 +9,7 @@ pub(super) enum ClientMsg {
     KeyEvent(u32, bool),
     PointerEvent(u16, u16, u8),
     ClientCutText(String),
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "desktop-resize", not(target_arch = "wasm32")))]
     SetDesktopSize(crate::DesktopLayout),
 }
 
@@ -103,7 +103,7 @@ impl ClientMsg {
                 writer.write_all(&payload).await?;
                 Ok(())
             }
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "desktop-resize", not(target_arch = "wasm32")))]
             ClientMsg::SetDesktopSize(layout) => {
                 layout.validate()?;
                 let mut payload = vec![251, 0];

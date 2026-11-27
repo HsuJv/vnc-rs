@@ -2,9 +2,9 @@ mod auth;
 pub mod connection;
 pub mod connector;
 mod messages;
-mod security;
 
 pub use connection::VncClient;
 pub use connector::VncConnector;
 
-mod resize;
+#[cfg_attr(not(feature = "desktop-resize"), path = "desktop_disabled.rs")]
+pub(crate) mod desktop;
